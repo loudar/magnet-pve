@@ -307,8 +307,14 @@ fn magnet(
                 let normalized_direction = direction.normalize();
                 
                 let targetSpeed = ENEMY_SPEED * MAGNET_FORCE * (2.0 - (distance / MAGNET_RADIUS));
-                enemy_velocity.x = normalized_direction.x * targetSpeed * VELOCITY_DRAG;
-                enemy_velocity.y = normalized_direction.y * targetSpeed * VELOCITY_DRAG;
+                let target_x = normalized_direction.x * targetSpeed * VELOCITY_DRAG;
+                let target_y = normalized_direction.y * targetSpeed * VELOCITY_DRAG;
+                if target_x > LEFT_WALL && target_x < RIGHT_WALL {
+                    enemy_velocity.x = target_x;
+                }
+                if target_y > BOTTOM_WALL && target_y < TOP_WALL {
+                    enemy_velocity.y = target_y;
+                }
             }
         }
     } else {
@@ -329,8 +335,14 @@ fn magnet(
                 let normalized_direction = direction.normalize();
                 
                 let targetSpeed = ENEMY_SPEED * MAGNET_FORCE * (2.0 - (distance / MAGNET_RADIUS));
-                enemy_velocity.x = normalized_direction.x * targetSpeed * VELOCITY_DRAG;
-                enemy_velocity.y = normalized_direction.y * targetSpeed * VELOCITY_DRAG;
+                let target_x = normalized_direction.x * targetSpeed * VELOCITY_DRAG;
+                let target_y = normalized_direction.y * targetSpeed * VELOCITY_DRAG;
+                if enemy_transform.translation.x + target_x > LEFT_WALL && enemy_transform.translation.x + target_x < RIGHT_WALL {
+                    enemy_velocity.x = target_x;
+                }
+                if enemy_transform.translation.y + target_y > BOTTOM_WALL && enemy_transform.translation.y + target_y < TOP_WALL {
+                    enemy_velocity.y = target_y;
+                }
             }
         }
     } else {
@@ -387,55 +399,52 @@ fn update_scoreboard(scoreboard: Res<Scoreboard>, mut query: Query<&mut Text>) {
     text.sections[1].value = scoreboard.score.to_string();
 }
 
+// check collisions for enemies with walls
 fn check_for_collisions(
     mut commands: Commands,
     mut scoreboard: ResMut<Scoreboard>,
-    collider_query: Query<(Entity, &Transform, Option<&Enemy>), With<Collider>>,
     mut collision_events: EventWriter<CollisionEvent>,
+    mut enemy_query: Query<(Entity, &mut Velocity, &Transform, &Collider), With<Enemy>>,
+    collider_query: Query<(Entity, &Transform), With<Collider>>,
 ) {
-    // check collision with walls
-    /*for (collider_entity, transform, maybe_enemy) in &collider_query {
-        let collision = collide(
-            enemy_transform.translation,
-            enemy_size,
-            transform.translation,
-            transform.scale.truncate(),
-        );
-        if let Some(collision) = collision {
-            // Sends a collision event so that other systems can react to the collision
-            collision_events.send_default();
+    for (enemy_entity, mut enemy_velocity, enemy_transform, enemy_collider) in enemy_query.iter_mut() {
+        for (wall_entity, wall_transform) in collider_query.iter() {
+            let collision = collide(
+                enemy_transform.translation,
+                ENEMY_SIZE,
+                wall_transform.translation,
+                wall_transform.scale.truncate(),
+            );
+            
+            if let Some(collision) = collision {
+                collision_events.send_default();
+                
+                // reflect the ball when it collides
+                let mut reflect_x = false;
+                let mut reflect_y = false;
 
-            // Bricks should be despawned and increment the scoreboard on collision
-            if maybe_enemy.is_some() {
-                scoreboard.score += 1;
-                commands.entity(collider_entity).despawn();
-            }
+                // only reflect if the ball's velocity is going in the opposite direction of the
+                // collision
+                match collision {
+                    Collision::Left => reflect_x = enemy_velocity.x > 0.0,
+                    Collision::Right => reflect_x = enemy_velocity.x < 0.0,
+                    Collision::Top => reflect_y = enemy_velocity.y < 0.0,
+                    Collision::Bottom => reflect_y = enemy_velocity.y > 0.0,
+                    Collision::Inside => { /* do nothing */ }
+                }
 
-            // reflect the ball when it collides
-            let mut reflect_x = false;
-            let mut reflect_y = false;
+                // reflect velocity on the x-axis if we hit something on the x-axis
+                if reflect_x {
+                    enemy_velocity.x = -enemy_velocity.x;
+                }
 
-            // only reflect if the ball's velocity is going in the opposite direction of the
-            // collision
-            match collision {
-                Collision::Left => reflect_x = enemy_velocity.x > 0.0,
-                Collision::Right => reflect_x = enemy_velocity.x < 0.0,
-                Collision::Top => reflect_y = enemy_velocity.y < 0.0,
-                Collision::Bottom => reflect_y = enemy_velocity.y > 0.0,
-                Collision::Inside => { /* do nothing */ }
-            }
-
-            // reflect velocity on the x-axis if we hit something on the x-axis
-            if reflect_x {
-                enemy_velocity.x = -enemy_velocity.x;
-            }
-
-            // reflect velocity on the y-axis if we hit something on the y-axis
-            if reflect_y {
-                enemy_velocity.y = -enemy_velocity.y;
+                // reflect velocity on the y-axis if we hit something on the y-axis
+                if reflect_y {
+                    enemy_velocity.y = -enemy_velocity.y;
+                }
             }
         }
-    }*/
+    }
 }
 
 fn play_collision_sound(
