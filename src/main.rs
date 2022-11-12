@@ -321,7 +321,7 @@ fn pull_push_enemy(
     enemy_sprite: &mut Sprite,
     enemy_transform: &mut Transform,
     enemy_velocity: &mut Velocity,
-    isPush: bool
+    is_push: bool
 )
 {
     if !point_in_radius(
@@ -333,7 +333,7 @@ fn pull_push_enemy(
     }
 
     let direction;
-    if isPush {
+    if is_push {
         direction = enemy_transform.translation - player_transform.translation;
     } else {
         direction = player_transform.translation - enemy_transform.translation;
@@ -358,7 +358,7 @@ fn pull_push_enemy(
     if !moved {
         return;
     }
-    if isPush {
+    if is_push {
         enemy_sprite.color = ENEMY_PUSH_COLOR;
     } else {
         enemy_sprite.color = ENEMY_PULL_COLOR;
@@ -414,9 +414,9 @@ fn move_enemies_to_player(
         let distance = direction.length();
         let normalized_direction = direction.normalize();
 
-        let targetSpeed = ENEMY_SPEED;
-        let target_x = normalized_direction.x * targetSpeed * VELOCITY_DRAG;
-        let target_y = normalized_direction.y * targetSpeed * VELOCITY_DRAG;
+        let target_speed = ENEMY_SPEED;
+        let target_x = normalized_direction.x * target_speed * VELOCITY_DRAG;
+        let target_y = normalized_direction.y * target_speed * VELOCITY_DRAG;
         if enemy_transform.translation.x + target_x > LEFT_WALL && enemy_transform.translation.x + target_x < RIGHT_WALL {
             enemy_velocity.x = target_x;
         }
