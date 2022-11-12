@@ -9,6 +9,8 @@ use bevy::{
 };
 use rand::prelude::*;
 
+mod combat;
+
 // Defines the amount of time that should elapse between each physics step.
 const TIME_STEP: f32 = 1.0 / 60.0;
 
@@ -36,8 +38,7 @@ const GAP_BETWEEN_PLAYER_AND_ENEMIES: f32 = 270.0;
 const SCOREBOARD_FONT_SIZE: f32 = 40.0;
 const SCOREBOARD_TEXT_PADDING: Val = Val::Px(5.0);
 
-const BACKGROUND_COLOR: Color = Color::rgb(0.9, 0.9, 0.9);
-const PLAYER_COLOR: Color = Color::rgb(0.3, 0.3, 0.7);
+const BACKGROUND_COLOR: Color = Color::rgb(0.05, 0.05, 0.05);
 const ENEMY_COLOR: Color = Color::rgb(0.5, 0.5, 1.0);
 const ENEMY_PULL_COLOR: Color = Color::rgb(1.0, 0.5, 0.5);
 const ENEMY_PUSH_COLOR: Color = Color::rgb(0.5, 1.0, 0.5);
@@ -301,31 +302,6 @@ fn point_in_radius(point: Vec2, center: Vec2, radius: f32) -> bool
 {
     let distance = point.distance(center);
     distance < radius
-}
-
-fn combat(
-    mut commands: Commands,
-    buttons: Res<Input<MouseButton>>,
-    mut scoreboard: ResMut<Scoreboard>,
-    mut player_query: Query<(&mut Sprite, &mut Transform), With<Player>>,
-    mut enemy_query: Query<(&mut Sprite, &mut Transform, &mut Health, &Enemy, Entity), Without<Player>>,
-)
-{
-    let (player_sprite, mut player_transform) = player_query.single_mut();
-    let player_position = player_transform.translation.truncate();
-     
-    for (mut enemy_sprite, mut enemy_transform, mut enemy_health, enemy, entity) in enemy_query.iter_mut() {
-        let enemy_position = enemy_transform.translation.truncate();
-        let distance = player_position.distance(enemy_position);
-        
-        if distance < WEAPON_RADIUS && buttons.just_pressed(MouseButton::Left) {
-            enemy_health.0 -= DAMAGE;
-            if enemy_health.0 <= 0.0 {
-                commands.entity(entity).despawn();
-                scoreboard.score += 1;
-            }
-        }
-    }
 }
 
 fn magnet(
