@@ -36,7 +36,6 @@ const SCOREBOARD_TEXT_PADDING: Val = Val::Px(5.0);
 
 const BACKGROUND_COLOR: Color = Color::rgb(0.9, 0.9, 0.9);
 const PLAYER_COLOR: Color = Color::rgb(0.3, 0.3, 0.7);
-const enemy_COLOR: Color = Color::rgb(1.0, 0.5, 0.5);
 const ENEMY_COLOR: Color = Color::rgb(0.5, 0.5, 1.0);
 const ENEMY_PULL_COLOR: Color = Color::rgb(1.0, 0.5, 0.5);
 const ENEMY_PUSH_COLOR: Color = Color::rgb(0.5, 1.0, 0.5);
@@ -61,6 +60,7 @@ fn main() {
             SystemSet::new()
                 .with_run_criteria(FixedTimestep::step(TIME_STEP as f64))
                 .with_system(check_for_collisions)
+                /*.with_system(move_enemies_to_player)*/
                 .with_system(move_player.before(check_for_collisions))
                 .with_system(magnet.before(move_player))
                 .with_system(apply_velocity.before(check_for_collisions))
@@ -296,26 +296,7 @@ fn magnet(
     if keyboard_input.pressed(KeyCode::Q) {
         player_sprite.color = ENEMY_PULL_COLOR;
         for (mut enemy_sprite, mut enemy_transform, mut enemy_velocity, maybe_enemy) in enemy_query.iter_mut() {
-            if point_in_radius(
-                enemy_transform.translation.truncate(),
-                player_transform.translation.truncate(),
-                MAGNET_RADIUS,
-            ) {
-                enemy_sprite.color = ENEMY_PULL_COLOR;
-                let direction = player_transform.translation - enemy_transform.translation;
-                let distance = direction.length();
-                let normalized_direction = direction.normalize();
-                
-                let targetSpeed = ENEMY_SPEED * MAGNET_FORCE * (2.0 - (distance / MAGNET_RADIUS));
-                let target_x = normalized_direction.x * targetSpeed * VELOCITY_DRAG;
-                let target_y = normalized_direction.y * targetSpeed * VELOCITY_DRAG;
-                if target_x > LEFT_WALL && target_x < RIGHT_WALL {
-                    enemy_velocity.x = target_x;
-                }
-                if target_y > BOTTOM_WALL && target_y < TOP_WALL {
-                    enemy_velocity.y = target_y;
-                }
-            }
+            PullPushEnemy(&mut player_transform, &mut enemy_sprite, &mut enemy_transform, &mut enemy_velocity, false);
         }
     } else {
         player_sprite.color = PLAYER_COLOR;
@@ -324,29 +305,39 @@ fn magnet(
     if keyboard_input.pressed(KeyCode::E) {
         player_sprite.color = ENEMY_PUSH_COLOR;
         for (mut enemy_sprite, mut enemy_transform, mut enemy_velocity, maybe_enemy) in enemy_query.iter_mut() {
-            if point_in_radius(
-                enemy_transform.translation.truncate(),
-                player_transform.translation.truncate(),
-                MAGNET_RADIUS,
-            ) {
-                enemy_sprite.color = ENEMY_PUSH_COLOR;
-                let direction = enemy_transform.translation - player_transform.translation;
-                let distance = direction.length();
-                let normalized_direction = direction.normalize();
-                
-                let targetSpeed = ENEMY_SPEED * MAGNET_FORCE * (2.0 - (distance / MAGNET_RADIUS));
-                let target_x = normalized_direction.x * targetSpeed * VELOCITY_DRAG;
-                let target_y = normalized_direction.y * targetSpeed * VELOCITY_DRAG;
-                if enemy_transform.translation.x + target_x > LEFT_WALL && enemy_transform.translation.x + target_x < RIGHT_WALL {
-                    enemy_velocity.x = target_x;
-                }
-                if enemy_transform.translation.y + target_y > BOTTOM_WALL && enemy_transform.translation.y + target_y < TOP_WALL {
-                    enemy_velocity.y = target_y;
-                }
-            }
+            PullPushEnemy(&mut player_transform, &mut enemy_sprite, &mut enemy_transform, &mut enemy_velocity, true);
         }
     } else {
         player_sprite.color = PLAYER_COLOR;
+    }
+}
+
+fn PullPushEnemy(player_transform: &mut Transform, enemy_sprite: &mut Sprite, enemy_transform: &mut Transform, enemy_velocity: &mut Velocity, isPush: bool) {
+    if point_in_radius(
+        enemy_transform.translation.truncate(),
+        player_transform.translation.truncate(),
+        MAGNET_RADIUS,
+    ) {
+        let direction;
+        if isPush {
+            enemy_sprite.color = ENEMY_PUSH_COLOR;
+            direction = enemy_transform.translation - player_transform.translation;
+        } else {
+            enemy_sprite.color = ENEMY_PULL_COLOR;
+            direction = player_transform.translation - enemy_transform.translation;
+        }
+        let distance = direction.length();
+        let normalized_direction = direction.normalize();
+
+        let targetSpeed = ENEMY_SPEED * MAGNET_FORCE * (2.0 - (distance / MAGNET_RADIUS));
+        let target_x = normalized_direction.x * targetSpeed * VELOCITY_DRAG;
+        let target_y = normalized_direction.y * targetSpeed * VELOCITY_DRAG;
+        if enemy_transform.translation.x + target_x > LEFT_WALL && enemy_transform.translation.x + target_x < RIGHT_WALL {
+            enemy_velocity.x = target_x;
+        }
+        if enemy_transform.translation.y + target_y > BOTTOM_WALL && enemy_transform.translation.y + target_y < TOP_WALL {
+            enemy_velocity.y = target_y;
+        }
     }
 }
 
@@ -385,6 +376,28 @@ fn move_player(
 
     player_transform.translation.x = new_player_pos_x.clamp(left_bound, right_bound);
     player_transform.translation.y = new_player_pos_y.clamp(bottom_bound, top_bound);
+}
+
+fn move_enemies_to_player(
+    mut player_query: Query<(&mut Sprite, &mut Transform), With<Player>>,
+    mut query: Query<(&mut Sprite, &mut Transform, &mut Velocity, &Enemy), Without<Player>>,
+) {
+    let (mut player_sprite, mut player_transform) = player_query.single_mut();
+    for (mut enemy_sprite, mut enemy_transform, mut enemy_velocity, maybe_enemy) in query.iter_mut() {
+        let direction = player_transform.translation - enemy_transform.translation;
+        let distance = direction.length();
+        let normalized_direction = direction.normalize();
+
+        let targetSpeed = ENEMY_SPEED;
+        let target_x = normalized_direction.x * targetSpeed * VELOCITY_DRAG;
+        let target_y = normalized_direction.y * targetSpeed * VELOCITY_DRAG;
+        if enemy_transform.translation.x + target_x > LEFT_WALL && enemy_transform.translation.x + target_x < RIGHT_WALL {
+            enemy_velocity.x = target_x;
+        }
+        if enemy_transform.translation.y + target_y > BOTTOM_WALL && enemy_transform.translation.y + target_y < TOP_WALL {
+            enemy_velocity.y = target_y;
+        }
+    }
 }
 
 fn apply_velocity(mut query: Query<(&mut Transform, &Velocity)>) {
