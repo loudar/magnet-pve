@@ -1,5 +1,3 @@
-
-
 //! A simplified implementation of the classic game "Breakout".
 
 use bevy::{
@@ -13,11 +11,11 @@ const TIME_STEP: f32 = 1.0 / 60.0;
 
 // These constants are defined in `Transform` units.
 // Using the default 2D camera they correspond 1:1 with screen pixels.
-const PADDLE_SIZE: Vec3 = Vec3::new(120.0, 20.0, 0.0);
-const GAP_BETWEEN_PADDLE_AND_FLOOR: f32 = 60.0;
-const PADDLE_SPEED: f32 = 500.0;
-// How close can the paddle get to the wall
-const PADDLE_PADDING: f32 = 10.0;
+const player_SIZE: Vec3 = Vec3::new(120.0, 20.0, 0.0);
+const GAP_BETWEEN_player_AND_FLOOR: f32 = 60.0;
+const player_SPEED: f32 = 500.0;
+// How close can the player get to the wall
+const player_PADDING: f32 = 10.0;
 
 // We set the z-value of the ball to 1 so it renders on top in the case of overlapping sprites.
 const BALL_STARTING_POSITION: Vec3 = Vec3::new(0.0, -50.0, 1.0);
@@ -33,19 +31,15 @@ const RIGHT_WALL: f32 = 450.;
 const BOTTOM_WALL: f32 = -300.;
 const TOP_WALL: f32 = 300.;
 
-const BRICK_SIZE: Vec2 = Vec2::new(100., 30.);
+const ENEMY_SIZE: Vec2 = Vec2::new(100., 30.);
 // These values are exact
-const GAP_BETWEEN_PADDLE_AND_BRICKS: f32 = 270.0;
-const GAP_BETWEEN_BRICKS: f32 = 5.0;
-// These values are lower bounds, as the number of bricks is computed
-const GAP_BETWEEN_BRICKS_AND_CEILING: f32 = 20.0;
-const GAP_BETWEEN_BRICKS_AND_SIDES: f32 = 20.0;
+const GAP_BETWEEN_player_AND_BRICKS: f32 = 270.0;
 
 const SCOREBOARD_FONT_SIZE: f32 = 40.0;
 const SCOREBOARD_TEXT_PADDING: Val = Val::Px(5.0);
 
 const BACKGROUND_COLOR: Color = Color::rgb(0.9, 0.9, 0.9);
-const PADDLE_COLOR: Color = Color::rgb(0.3, 0.3, 0.7);
+const player_COLOR: Color = Color::rgb(0.3, 0.3, 0.7);
 const BALL_COLOR: Color = Color::rgb(1.0, 0.5, 0.5);
 const BRICK_COLOR: Color = Color::rgb(0.5, 0.5, 1.0);
 const WALL_COLOR: Color = Color::rgb(0.8, 0.8, 0.8);
@@ -61,11 +55,11 @@ fn main() {
         .add_event::<CollisionEvent>()
         .add_system_set(
             SystemSet::new()
-                .with_run_criteria(FixedTimestep::step(TIME_STEP as f64))
-                .with_system(check_for_collisions)
-                .with_system(move_paddle.before(check_for_collisions))
-                .with_system(apply_velocity.before(check_for_collisions))
-                .with_system(play_collision_sound.after(check_for_collisions)),
+                /*.with_run_criteria(FixedTimestep::step(TIME_STEP as f64))
+                check_for_collisions)*/
+                .with_system(move_player.before(check_for_collisions))
+                /*.with_system(apply_velocity.before(check_for_collisions))
+                .with_system(play_collision_sound.after(check_for_collisions))*/,
         )
         .add_system(update_scoreboard)
         .add_system(bevy::window::close_on_esc)
@@ -73,7 +67,7 @@ fn main() {
 }
 
 #[derive(Component)]
-struct Paddle;
+struct player;
 
 #[derive(Component)]
 struct Ball;
@@ -179,20 +173,20 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     let ball_collision_sound = asset_server.load("sounds/breakout_collision.ogg");
     commands.insert_resource(CollisionSound(ball_collision_sound));
 
-    // Paddle
-    let paddle_y = BOTTOM_WALL + GAP_BETWEEN_PADDLE_AND_FLOOR;
+    // player
+    let player_y = BOTTOM_WALL + GAP_BETWEEN_player_AND_FLOOR;
 
     commands
         .spawn()
-        .insert(Paddle)
+        .insert(player)
         .insert_bundle(SpriteBundle {
             transform: Transform {
-                translation: Vec3::new(0.0, paddle_y, 0.0),
-                scale: PADDLE_SIZE,
+                translation: Vec3::new(0.0, player_y, 0.0),
+                scale: player_SIZE,
                 ..default()
             },
             sprite: Sprite {
-                color: PADDLE_COLOR,
+                color: player_COLOR,
                 ..default()
             },
             ..default()
@@ -200,7 +194,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         .insert(Collider);
 
     // Ball
-    commands
+    /*commands
         .spawn()
         .insert(Ball)
         .insert_bundle(SpriteBundle {
@@ -215,7 +209,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
             },
             ..default()
         })
-        .insert(Velocity(INITIAL_BALL_DIRECTION.normalize() * BALL_SPEED));
+        .insert(Velocity(INITIAL_BALL_DIRECTION.normalize() * BALL_SPEED));*/
 
     // Scoreboard
     commands.spawn_bundle(
@@ -251,58 +245,67 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.spawn_bundle(WallBundle::new(WallLocation::Bottom));
     commands.spawn_bundle(WallBundle::new(WallLocation::Top));
 
-    for row in 0..n_rows {
-        for column in 0..n_columns {
-            let brick_position = Vec2::new(
-                offset_x + column as f32 * (BRICK_SIZE.x + GAP_BETWEEN_BRICKS),
-                offset_y + row as f32 * (BRICK_SIZE.y + GAP_BETWEEN_BRICKS),
-            );
+    /*for e in 0..enemies.count() {
+        let enemy_position = Vec2::new(
+            offset_x + enemies[e].x as f32 * (ENEMY_SIZE.x + GAP_BETWEEN_BRICKS),
+            offset_y + enemies[e].y as f32 * (ENEMY_SIZE.y + GAP_BETWEEN_BRICKS),
+        );
 
-            // brick
-            commands
-                .spawn()
-                .insert(Brick)
-                .insert_bundle(SpriteBundle {
-                    sprite: Sprite {
-                        color: BRICK_COLOR,
-                        ..default()
-                    },
-                    transform: Transform {
-                        translation: brick_position.extend(0.0),
-                        scale: Vec3::new(BRICK_SIZE.x, BRICK_SIZE.y, 1.0),
-                        ..default()
-                    },
+        // brick
+        commands
+            .spawn()
+            .insert(Brick)
+            .insert_bundle(SpriteBundle {
+                sprite: Sprite {
+                    color: BRICK_COLOR,
                     ..default()
-                })
-                .insert(Collider);
-        }
-    }
+                },
+                transform: Transform {
+                    translation: brick_position.extend(0.0),
+                    scale: Vec3::new(ENEMY_SIZE.x, ENEMY_SIZE.y, 1.0),
+                    ..default()
+                },
+                ..default()
+            })
+            .insert(Collider);
+    }*/
 }
 
-fn move_paddle(
+fn move_player(
     keyboard_input: Res<Input<KeyCode>>,
-    mut query: Query<&mut Transform, With<Paddle>>,
+    mut query: Query<&mut Transform, With<player>>,
 ) {
-    let mut paddle_transform = query.single_mut();
-    let mut direction = 0.0;
+    let mut player_transform = query.single_mut();
+    let mut direction = Vec2::ZERO;
 
     if keyboard_input.pressed(KeyCode::Left) {
-        direction -= 1.0;
+        direction.x -= 1.0;
     }
 
     if keyboard_input.pressed(KeyCode::Right) {
-        direction += 1.0;
+        direction.x += 1.0;
+    }
+    
+    if keyboard_input.pressed(KeyCode::Up) {
+        direction.y += 1.0;
+    }
+    
+    if keyboard_input.pressed(KeyCode::Down) {
+        direction.y -= 1.0;
     }
 
-    // Calculate the new horizontal paddle position based on player input
-    let new_paddle_position = paddle_transform.translation.x + direction * PADDLE_SPEED * TIME_STEP;
+    let new_player_pos_x = player_transform.translation.x + direction.x * player_SPEED * TIME_STEP;
+    let new_player_pos_y = player_transform.translation.y + direction.y * player_SPEED * TIME_STEP;
 
-    // Update the paddle position,
-    // making sure it doesn't cause the paddle to leave the arena
-    let left_bound = LEFT_WALL + WALL_THICKNESS / 2.0 + PADDLE_SIZE.x / 2.0 + PADDLE_PADDING;
-    let right_bound = RIGHT_WALL - WALL_THICKNESS / 2.0 - PADDLE_SIZE.x / 2.0 - PADDLE_PADDING;
+    // Update the player position,
+    // making sure it doesn't cause the player to leave the arena
+    let left_bound = LEFT_WALL + WALL_THICKNESS / 2.0 + player_SIZE.x / 2.0 + player_PADDING;
+    let right_bound = RIGHT_WALL - WALL_THICKNESS / 2.0 - player_SIZE.x / 2.0 - player_PADDING;
+    let bottom_bound = BOTTOM_WALL + WALL_THICKNESS / 2.0 + player_SIZE.y / 2.0 + player_PADDING;
+    let top_bound = TOP_WALL - WALL_THICKNESS / 2.0 - player_SIZE.y / 2.0 - player_PADDING;
 
-    paddle_transform.translation.x = new_paddle_position.clamp(left_bound, right_bound);
+    player_transform.translation.x = new_player_pos_x.clamp(left_bound, right_bound);
+    player_transform.translation.y = new_player_pos_y.clamp(bottom_bound, top_bound);
 }
 
 fn apply_velocity(mut query: Query<(&mut Transform, &Velocity)>) {
