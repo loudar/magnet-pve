@@ -5,8 +5,10 @@ use std::f64::consts::PI;
 use bevy::{
     prelude::*,
     sprite::collide_aabb::{collide, Collision},
+    sprite::*,
     time::FixedTimestep,
 };
+use bevy_prototype_lyon::prelude::*;
 use bevy_simple_stat_bars::prelude::*;
 use rand::prelude::*;
 
@@ -48,13 +50,13 @@ const SCORE_COLOR: Color = Color::rgb(1.0, 0.5, 0.5);
 const MAGNET_RADIUS: f32 = 400.0;
 const MAGNET_FORCE: f32 = 100.0;
 
-const ENEMY_COUNT: usize = 10; 
+const ENEMY_COUNT: usize = 10;
 const VELOCITY_DRAG: f32 = 0.99;
 
-const WEAPON_RADIUS: f32 = 100.0;
-const DAMAGE: f32 = 4.0;
+const WEAPON_RADIUS: f32 = 200.0;
+const DAMAGE: f32 = 5.0;
 
-const PLAYER_HEALTH: f32 = 100.0;
+const PLAYER_HEALTH: f32 = 20.0;
 const ENEMY_HEALTH: f32 = 10.0;
 
 const EXPLOSION_SHEET: &str = "images/explo_a_sheet.png";
@@ -68,6 +70,7 @@ fn main() {
         .add_startup_system(setup)
         .add_event::<MagnetPullEvent>()
         .add_event::<MagnetPushEvent>()
+        .add_event::<PlayerCollisionEvent>()
         .add_system_set(
             SystemSet::new()
                 .with_run_criteria(FixedTimestep::step(TIME_STEP as f64))
@@ -77,6 +80,7 @@ fn main() {
                 .with_system(apply_velocity.before(check_for_collisions))
                 .with_system(combat.before(check_for_collisions))
                 .with_system(check_for_collisions)
+                .with_system(play_player_collision_sounds.after(check_for_collisions))
         )
         .add_system(update_scoreboard)
         .add_system(bevy::window::close_on_esc)
@@ -100,11 +104,17 @@ struct MagnetPullEvent;
 #[derive(Default)]
 struct MagnetPushEvent;
 
+#[derive(Default)]
+struct PlayerCollisionEvent;
+
 #[derive(Component)]
 struct Enemy;
 
 #[derive(Component)]
-struct Hp { current: i32, max: i32 }
+struct Hp {
+    current: i32,
+    max: i32,
+}
 
 #[derive(Component)]
 pub struct Explosion;
@@ -122,7 +132,10 @@ impl Default for ExplosionTimer {
 }
 
 struct MagnetPullSound(Handle<AudioSource>);
+
 struct MagnetPushSound(Handle<AudioSource>);
+
+struct PlayerCollisionSound(Handle<AudioSource>);
 
 struct ExplosionTexture(Handle<TextureAtlas>);
 
@@ -200,7 +213,7 @@ impl WallBundle {
 
 // This resource tracks the game's score
 struct Scoreboard {
-    score: usize,
+    score: i32,
 }
 
 // Add the game's entities to our world
@@ -208,7 +221,7 @@ fn setup(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     mut texture_atlases: ResMut<Assets<TextureAtlas>>,
-    audio: Res<Audio>
+    audio: Res<Audio>,
 )
 {
     // Camera
@@ -217,7 +230,8 @@ fn setup(
     // Sound
     commands.insert_resource(MagnetPullSound(asset_server.load("sounds/magnet_pull.ogg")));
     commands.insert_resource(MagnetPushSound(asset_server.load("sounds/magnet_push.ogg")));
-    
+    commands.insert_resource(PlayerCollisionSound(asset_server.load("sounds/player_hit.ogg")));
+
     commands.insert_resource(ExplosionTexture(
         texture_atlases.add(TextureAtlas::from_grid(
             asset_server.load(EXPLOSION_SHEET),
@@ -227,8 +241,8 @@ fn setup(
         ))
     ));
 
-    audio.play_with_settings(asset_server.load("sounds/soundtrack.ogg"), PlaybackSettings::LOOP.with_volume(0.75));
-    
+    //audio.play_with_settings(asset_server.load("sounds/soundtrack.ogg"), PlaybackSettings::LOOP.with_volume(0.75));
+
     // Player
     let player_y = BOTTOM_WALL + GAP_BETWEEN_PLAYER_AND_FLOOR;
     let player = commands
@@ -291,7 +305,7 @@ fn setup(
             thread_rng().gen_range(LEFT_WALL..RIGHT_WALL),
             thread_rng().gen_range(BOTTOM_WALL..TOP_WALL),
         );
-        
+
         let spritenum = thread_rng().gen_range(1..3);
 
         // enemy
@@ -357,23 +371,22 @@ fn combat(
                 buttons.just_pressed(MouseButton::Left)
                     || keyboard_input.just_pressed(KeyCode::Space)
             ) {
-
             enemy_health.current -= DAMAGE as i32;
 
             enemy_sprite.color = Color::rgba(1.0, 1.0, 1.0, enemy_health.current as f32 / enemy_health.max as f32);
             if enemy_health.current <= 0 {
                 commands.entity(entity).despawn();
                 scoreboard.score += 1;
-                
+
                 commands.spawn().insert(ExplosionToSpawn(enemy_transform.translation.clone()));
-                
+
                 let enemy_position = Vec2::new(
                     thread_rng().gen_range(LEFT_WALL..RIGHT_WALL),
                     thread_rng().gen_range(BOTTOM_WALL..TOP_WALL),
                 );
-                
+
                 let spritenum = thread_rng().gen_range(1..3);
-                
+
                 commands
                     .spawn()
                     .insert(Enemy)
@@ -457,15 +470,15 @@ fn magnet(
     for (mut enemy_sprite, mut enemy_transform, mut enemy_velocity, maybe_enemy) in enemy_query.iter_mut() {
         //enemy_sprite.color = ENEMY_COLOR;
     }
-    
+
     if keyboard_input.just_pressed(KeyCode::Q) {
         magnet_pull_events.send(MagnetPullEvent);
     }
-    
+
     if keyboard_input.just_pressed(KeyCode::E) {
         magnet_push_events.send(MagnetPushEvent);
     }
-    
+
     if keyboard_input.pressed(KeyCode::Q) {
         player_sprite.flip_y = true;
         for (mut enemy_sprite, mut enemy_transform, mut enemy_velocity, maybe_enemy) in enemy_query.iter_mut() {
@@ -474,7 +487,7 @@ fn magnet(
     } else {
         player_sprite.flip_y = false;
     }
-    
+
     if keyboard_input.pressed(KeyCode::E) {
         for (mut enemy_sprite, mut enemy_transform, mut enemy_velocity, maybe_enemy) in enemy_query.iter_mut() {
             pull_push_enemy(&mut player_transform, &mut enemy_sprite, &mut enemy_transform, &mut enemy_velocity, true);
@@ -487,7 +500,7 @@ fn pull_push_enemy(
     enemy_sprite: &mut Sprite,
     enemy_transform: &mut Transform,
     enemy_velocity: &mut Velocity,
-    is_push: bool
+    is_push: bool,
 )
 {
     if !point_in_radius(
@@ -520,7 +533,7 @@ fn pull_push_enemy(
         enemy_velocity.y = target_y;
         moved = true;
     }
-    
+
     if !moved {
         return;
     }
@@ -583,9 +596,9 @@ fn move_enemies_to_player(
         let target_speed = ENEMY_SPEED;
         let target_x = normalized_direction.x * target_speed * VELOCITY_DRAG;
         let target_y = normalized_direction.y * target_speed * VELOCITY_DRAG;
-        
+
         let test_velocity = enemy_velocity.clone();
-        
+
         if would_exceed_bounds(&enemy_transform, test_velocity) {
             return;
         }
@@ -605,7 +618,7 @@ fn apply_velocity(mut query: Query<(&mut Transform, &Velocity)>)
 
 fn would_exceed_bounds(
     transform: &Transform,
-    velocity: Vec2
+    velocity: Vec2,
 ) -> bool
 {
     let left_bound = LEFT_WALL + WALL_THICKNESS / 2.0;
@@ -616,7 +629,7 @@ fn would_exceed_bounds(
     let new_pos_x = transform.translation.x + velocity.x * TIME_STEP;
     let new_pos_y = transform.translation.y + velocity.y * TIME_STEP;
 
-    return new_pos_x < left_bound || new_pos_x > right_bound || new_pos_y < bottom_bound || new_pos_y > top_bound
+    return new_pos_x < left_bound || new_pos_x > right_bound || new_pos_y < bottom_bound || new_pos_y > top_bound;
 }
 
 // check collisions for enemies with walls
@@ -624,19 +637,33 @@ fn check_for_collisions(
     mut commands: Commands,
     mut scoreboard: ResMut<Scoreboard>,
     mut enemy_query: Query<(Entity, &mut Velocity, &Transform, &Collider), With<Enemy>>,
-    collider_query: Query<(Entity, &Transform), With<Collider>>,
+    collider_query: Query<(Entity, &Transform, Option<&Player>), With<Collider>>,
+    mut player_collision_events: EventWriter<PlayerCollisionEvent>,
 )
 {
     for (enemy_entity, mut enemy_velocity, enemy_transform, enemy_collider) in enemy_query.iter_mut() {
-        for (wall_entity, wall_transform) in collider_query.iter() {
+        for (collider_entity, collider_transform, maybe_player) in collider_query.iter() {
             let collision = collide(
                 enemy_transform.translation,
                 ENEMY_SIZE,
-                wall_transform.translation,
-                wall_transform.scale.truncate(),
+                collider_transform.translation,
+                collider_transform.scale.truncate(),
             );
-            
-            if let Some(collision) = collision {                
+
+            if let Some(collision) = collision {
+                if let Some(player) = maybe_player {
+                    player_collision_events.send(PlayerCollisionEvent);
+
+                    let direction = enemy_transform.translation - collider_transform.translation;
+                    let normalized_direction = direction.normalize();
+                    let target_x = normalized_direction.x * ENEMY_SPEED * VELOCITY_DRAG;
+                    let target_y = normalized_direction.y * ENEMY_SPEED * VELOCITY_DRAG;
+                    enemy_velocity.x = target_x;
+                    enemy_velocity.y = target_y;
+
+                    scoreboard.score -= 1;
+                }
+
                 // reflect the ball when it collides
                 let mut reflect_x = false;
                 let mut reflect_y = false;
@@ -680,5 +707,28 @@ fn play_magnet_sounds(
     if !magnet_push_events.is_empty() {
         magnet_push_events.clear();
         audio.play(push_sound.0.clone());
+    }
+}
+
+fn play_player_collision_sounds(
+    player_collision_events: EventReader<PlayerCollisionEvent>,
+    audio: Res<Audio>,
+    player_collision_sound: Res<PlayerCollisionSound>,
+    mut player_query: Query<(&mut Hp), With<Player>>,
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+)
+{
+    if !player_collision_events.is_empty() {
+        player_collision_events.clear();
+        audio.play(player_collision_sound.0.clone());
+
+        let (mut player_hp) = player_query.single_mut();
+        player_hp.current -= 1;
+
+        if player_hp.current <= 0 {
+            print!("GAME OVER");
+            std::process::exit(0);
+        }
     }
 }
