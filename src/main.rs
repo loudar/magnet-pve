@@ -45,14 +45,14 @@ const WALL_COLOR: Color = Color::rgb(0.8, 0.8, 0.8);
 const TEXT_COLOR: Color = Color::rgb(0.5, 0.5, 1.0);
 const SCORE_COLOR: Color = Color::rgb(1.0, 0.5, 0.5);
 
-const MAGNET_RADIUS: f32 = 200.0;
-const MAGNET_FORCE: f32 = 50.0;
+const MAGNET_RADIUS: f32 = 400.0;
+const MAGNET_FORCE: f32 = 100.0;
 
 const ENEMY_COUNT: usize = 10; 
 const VELOCITY_DRAG: f32 = 0.99;
 
-const WEAPON_RADIUS: f32 = MAGNET_RADIUS / 2.0;
-const DAMAGE: f32 = 10.0;
+const WEAPON_RADIUS: f32 = 100.0;
+const DAMAGE: f32 = 4.0;
 
 const PLAYER_HEALTH: f32 = 100.0;
 const ENEMY_HEALTH: f32 = 10.0;
@@ -301,7 +301,6 @@ fn setup(
             .insert(Hp { current: ENEMY_HEALTH as i32, max: ENEMY_HEALTH as i32 })
             .insert_bundle(SpriteBundle {
                 sprite: Sprite {
-                    color: ENEMY_COLOR,
                     custom_size: Option::from(Vec2::new(1.0, 1.0)),
                     flip_x: thread_rng().gen(),
                     flip_y: thread_rng().gen(),
@@ -340,6 +339,7 @@ fn combat(
     mut commands: Commands,
     buttons: Res<Input<MouseButton>>,
     keyboard_input: Res<Input<KeyCode>>,
+    asset_server: Res<AssetServer>,
     mut scoreboard: ResMut<Scoreboard>,
     mut player_query: Query<(&mut Sprite, &mut Transform), With<Player>>,
     mut enemy_query: Query<(&mut Sprite, &mut Transform, &mut Hp, &Enemy, Entity), Without<Player>>,
@@ -358,13 +358,47 @@ fn combat(
                     || keyboard_input.just_pressed(KeyCode::Space)
             ) {
 
-            print!("Hit enemy!");
             enemy_health.current -= DAMAGE as i32;
+
+            enemy_sprite.color = Color::rgba(1.0, 1.0, 1.0, enemy_health.current as f32 / enemy_health.max as f32);
             if enemy_health.current <= 0 {
                 commands.entity(entity).despawn();
                 scoreboard.score += 1;
                 
                 commands.spawn().insert(ExplosionToSpawn(enemy_transform.translation.clone()));
+                
+                let enemy_position = Vec2::new(
+                    thread_rng().gen_range(LEFT_WALL..RIGHT_WALL),
+                    thread_rng().gen_range(BOTTOM_WALL..TOP_WALL),
+                );
+                
+                let spritenum = thread_rng().gen_range(1..3);
+                
+                commands
+                    .spawn()
+                    .insert(Enemy)
+                    .insert(Hp { current: ENEMY_HEALTH as i32, max: ENEMY_HEALTH as i32 })
+                    .insert_bundle(SpriteBundle {
+                        sprite: Sprite {
+                            custom_size: Option::from(Vec2::new(1.0, 1.0)),
+                            flip_x: thread_rng().gen(),
+                            flip_y: thread_rng().gen(),
+                            ..default()
+                        },
+                        transform: Transform {
+                            translation: enemy_position.extend(0.0),
+                            scale: Vec3::new(ENEMY_SIZE.x, ENEMY_SIZE.y, 1.0),
+                            rotation: Quat::from_rotation_z(thread_rng().gen_range(0.0..2.0 * PI) as f32),
+                            ..default()
+                        },
+                        texture: asset_server.load(&format!("images/enemy_{}.png", spritenum.to_string())),
+                        ..default()
+                    })
+                    .insert(Velocity(Vec2::new(
+                        thread_rng().gen_range(-ENEMY_SPEED..ENEMY_SPEED),
+                        thread_rng().gen_range(-ENEMY_SPEED..ENEMY_SPEED),
+                    )))
+                    .insert(Collider);
             }
         }
     }
@@ -421,7 +455,7 @@ fn magnet(
     let (mut player_sprite, mut player_transform) = query.single_mut();
 
     for (mut enemy_sprite, mut enemy_transform, mut enemy_velocity, maybe_enemy) in enemy_query.iter_mut() {
-        enemy_sprite.color = ENEMY_COLOR;
+        //enemy_sprite.color = ENEMY_COLOR;
     }
     
     if keyboard_input.just_pressed(KeyCode::Q) {
@@ -468,12 +502,12 @@ fn pull_push_enemy(
     if is_push {
         direction = enemy_transform.translation - player_transform.translation;
     } else {
-        direction = player_transform.translation - enemy_transform.translation;
+        direction = (enemy_transform.translation - player_transform.translation) * -1.0;
     }
     let distance = direction.length();
     let normalized_direction = direction.normalize();
 
-    let additional_speed = MAGNET_FORCE * (MAGNET_RADIUS / distance);
+    let additional_speed = MAGNET_FORCE * ((MAGNET_RADIUS / distance) - 1.0);
     let target_speed = ENEMY_SPEED + additional_speed;
     let target_x = normalized_direction.x * target_speed * VELOCITY_DRAG;
     let target_y = normalized_direction.y * target_speed * VELOCITY_DRAG;
@@ -505,19 +539,19 @@ fn move_player(
     let (mut player_sprite, mut player_transform) = query.single_mut();
     let mut direction = Vec2::ZERO;
 
-    if keyboard_input.pressed(KeyCode::Left) {
+    if keyboard_input.pressed(KeyCode::A) {
         direction.x -= 1.0;
     }
 
-    if keyboard_input.pressed(KeyCode::Right) {
+    if keyboard_input.pressed(KeyCode::D) {
         direction.x += 1.0;
     }
 
-    if keyboard_input.pressed(KeyCode::Up) {
+    if keyboard_input.pressed(KeyCode::W) {
         direction.y += 1.0;
     }
 
-    if keyboard_input.pressed(KeyCode::Down) {
+    if keyboard_input.pressed(KeyCode::S) {
         direction.y -= 1.0;
     }
 
@@ -549,12 +583,15 @@ fn move_enemies_to_player(
         let target_speed = ENEMY_SPEED;
         let target_x = normalized_direction.x * target_speed * VELOCITY_DRAG;
         let target_y = normalized_direction.y * target_speed * VELOCITY_DRAG;
-        if enemy_transform.translation.x + target_x > LEFT_WALL && enemy_transform.translation.x + target_x < RIGHT_WALL {
-            enemy_velocity.x = target_x;
+        
+        let test_velocity = enemy_velocity.clone();
+        
+        if would_exceed_bounds(&enemy_transform, test_velocity) {
+            return;
         }
-        if enemy_transform.translation.y + target_y > BOTTOM_WALL && enemy_transform.translation.y + target_y < TOP_WALL {
-            enemy_velocity.y = target_y;
-        }
+
+        enemy_velocity.x = target_x;
+        enemy_velocity.y = target_y;
     }
 }
 
@@ -564,6 +601,22 @@ fn apply_velocity(mut query: Query<(&mut Transform, &Velocity)>)
         transform.translation.x += velocity.x * TIME_STEP;
         transform.translation.y += velocity.y * TIME_STEP;
     }
+}
+
+fn would_exceed_bounds(
+    transform: &Transform,
+    velocity: Vec2
+) -> bool
+{
+    let left_bound = LEFT_WALL + WALL_THICKNESS / 2.0;
+    let right_bound = RIGHT_WALL - WALL_THICKNESS / 2.0;
+    let bottom_bound = BOTTOM_WALL + WALL_THICKNESS / 2.0;
+    let top_bound = TOP_WALL - WALL_THICKNESS / 2.0;
+
+    let new_pos_x = transform.translation.x + velocity.x * TIME_STEP;
+    let new_pos_y = transform.translation.y + velocity.y * TIME_STEP;
+
+    return new_pos_x < left_bound || new_pos_x > right_bound || new_pos_y < bottom_bound || new_pos_y > top_bound
 }
 
 // check collisions for enemies with walls
