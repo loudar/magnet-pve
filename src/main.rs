@@ -82,7 +82,7 @@ struct Collider;
 struct CollisionEvent;
 
 #[derive(Component)]
-struct Brick;
+struct Enemy;
 
 struct CollisionSound(Handle<AudioSource>);
 
@@ -251,17 +251,17 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
             offset_y + enemies[e].y as f32 * (ENEMY_SIZE.y + GAP_BETWEEN_BRICKS),
         );
 
-        // brick
+        // enemy
         commands
             .spawn()
-            .insert(Brick)
+            .insert(Enemy)
             .insert_bundle(SpriteBundle {
                 sprite: Sprite {
                     color: BRICK_COLOR,
                     ..default()
                 },
                 transform: Transform {
-                    translation: brick_position.extend(0.0),
+                    translation: enemy_position.extend(0.0),
                     scale: Vec3::new(ENEMY_SIZE.x, ENEMY_SIZE.y, 1.0),
                     ..default()
                 },
@@ -324,14 +324,14 @@ fn check_for_collisions(
     mut commands: Commands,
     mut scoreboard: ResMut<Scoreboard>,
     mut ball_query: Query<(&mut Velocity, &Transform), With<Ball>>,
-    collider_query: Query<(Entity, &Transform, Option<&Brick>), With<Collider>>,
+    collider_query: Query<(Entity, &Transform, Option<&Enemy>), With<Collider>>,
     mut collision_events: EventWriter<CollisionEvent>,
 ) {
     let (mut ball_velocity, ball_transform) = ball_query.single_mut();
     let ball_size = ball_transform.scale.truncate();
 
     // check collision with walls
-    for (collider_entity, transform, maybe_brick) in &collider_query {
+    for (collider_entity, transform, maybe_enemy) in &collider_query {
         let collision = collide(
             ball_transform.translation,
             ball_size,
@@ -342,8 +342,8 @@ fn check_for_collisions(
             // Sends a collision event so that other systems can react to the collision
             collision_events.send_default();
 
-            // Bricks should be despawned and increment the scoreboard on collision
-            if maybe_brick.is_some() {
+            // Enemys should be despawned and increment the scoreboard on collision
+            if maybe_enemy.is_some() {
                 scoreboard.score += 1;
                 commands.entity(collider_entity).despawn();
             }
