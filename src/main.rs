@@ -11,8 +11,8 @@ const TIME_STEP: f32 = 1.0 / 60.0;
 
 // These constants are defined in `Transform` units.
 // Using the default 2D camera they correspond 1:1 with screen pixels.
-const player_SIZE: Vec3 = Vec3::new(120.0, 20.0, 0.0);
-const GAP_BETWEEN_player_AND_FLOOR: f32 = 60.0;
+const player_SIZE: Vec3 = Vec3::new(20.0, 20.0, 0.0);
+const GAP_BETWEEN_PLAYER_AND_FLOOR: f32 = 60.0;
 const player_SPEED: f32 = 500.0;
 // How close can the player get to the wall
 const player_PADDING: f32 = 10.0;
@@ -46,6 +46,9 @@ const WALL_COLOR: Color = Color::rgb(0.8, 0.8, 0.8);
 const TEXT_COLOR: Color = Color::rgb(0.5, 0.5, 1.0);
 const SCORE_COLOR: Color = Color::rgb(1.0, 0.5, 0.5);
 
+const MAGNET_RADIUS: f32 = 100.0;
+const MAGNET_FORCE: f32 = 10.0;
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
@@ -57,9 +60,10 @@ fn main() {
             SystemSet::new()
                 /*.with_run_criteria(FixedTimestep::step(TIME_STEP as f64))
                 check_for_collisions)*/
-                .with_system(move_player.before(check_for_collisions))
-                /*.with_system(apply_velocity.before(check_for_collisions))
-                .with_system(play_collision_sound.after(check_for_collisions))*/,
+                .with_system(move_player)
+                .with_system(player_actions.after(move_player))
+            /*.with_system(apply_velocity.before(check_for_collisions))
+            .with_system(play_collision_sound.after(check_for_collisions))*/,
         )
         .add_system(update_scoreboard)
         .add_system(bevy::window::close_on_esc)
@@ -67,10 +71,7 @@ fn main() {
 }
 
 #[derive(Component)]
-struct player;
-
-#[derive(Component)]
-struct Ball;
+struct Player;
 
 #[derive(Component, Deref, DerefMut)]
 struct Velocity(Vec2);
@@ -174,11 +175,11 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.insert_resource(CollisionSound(ball_collision_sound));
 
     // player
-    let player_y = BOTTOM_WALL + GAP_BETWEEN_player_AND_FLOOR;
+    let player_y = BOTTOM_WALL + GAP_BETWEEN_PLAYER_AND_FLOOR;
 
     commands
         .spawn()
-        .insert(player)
+        .insert(Player)
         .insert_bundle(SpriteBundle {
             transform: Transform {
                 translation: Vec3::new(0.0, player_y, 0.0),
@@ -271,11 +272,22 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     }*/
 }
 
+fn player_actions(
+    keyboard_input: Res<Input<KeyCode>>,
+    mut query: Query<&mut Sprite, With<Player>>,
+) {
+    let mut playersprite = query.single_mut();
+
+    if keyboard_input.pressed(KeyCode::Q) {
+        playersprite.color = Color::rgb(1.0, 0.0, 0.0);
+    }
+}
+
 fn move_player(
     keyboard_input: Res<Input<KeyCode>>,
-    mut query: Query<&mut Transform, With<player>>,
+    mut query: Query<(&mut Sprite, &mut Transform), With<Player>>,
 ) {
-    let mut player_transform = query.single_mut();
+    let (mut playersprite, mut playertransform) = query.single_mut();
     let mut direction = Vec2::ZERO;
 
     if keyboard_input.pressed(KeyCode::Left) {
@@ -285,17 +297,17 @@ fn move_player(
     if keyboard_input.pressed(KeyCode::Right) {
         direction.x += 1.0;
     }
-    
+
     if keyboard_input.pressed(KeyCode::Up) {
         direction.y += 1.0;
     }
-    
+
     if keyboard_input.pressed(KeyCode::Down) {
         direction.y -= 1.0;
     }
 
-    let new_player_pos_x = player_transform.translation.x + direction.x * player_SPEED * TIME_STEP;
-    let new_player_pos_y = player_transform.translation.y + direction.y * player_SPEED * TIME_STEP;
+    let new_player_pos_x = playertransform.translation.x + direction.x * player_SPEED * TIME_STEP;
+    let new_player_pos_y = playertransform.translation.y + direction.y * player_SPEED * TIME_STEP;
 
     // Update the player position,
     // making sure it doesn't cause the player to leave the arena
@@ -304,8 +316,8 @@ fn move_player(
     let bottom_bound = BOTTOM_WALL + WALL_THICKNESS / 2.0 + player_SIZE.y / 2.0 + player_PADDING;
     let top_bound = TOP_WALL - WALL_THICKNESS / 2.0 - player_SIZE.y / 2.0 - player_PADDING;
 
-    player_transform.translation.x = new_player_pos_x.clamp(left_bound, right_bound);
-    player_transform.translation.y = new_player_pos_y.clamp(bottom_bound, top_bound);
+    playertransform.translation.x = new_player_pos_x.clamp(left_bound, right_bound);
+    playertransform.translation.y = new_player_pos_y.clamp(bottom_bound, top_bound);
 }
 
 fn apply_velocity(mut query: Query<(&mut Transform, &Velocity)>) {
@@ -323,57 +335,8 @@ fn update_scoreboard(scoreboard: Res<Scoreboard>, mut query: Query<&mut Text>) {
 fn check_for_collisions(
     mut commands: Commands,
     mut scoreboard: ResMut<Scoreboard>,
-    mut ball_query: Query<(&mut Velocity, &Transform), With<Ball>>,
-    collider_query: Query<(Entity, &Transform, Option<&Enemy>), With<Collider>>,
     mut collision_events: EventWriter<CollisionEvent>,
-) {
-    let (mut ball_velocity, ball_transform) = ball_query.single_mut();
-    let ball_size = ball_transform.scale.truncate();
-
-    // check collision with walls
-    for (collider_entity, transform, maybe_enemy) in &collider_query {
-        let collision = collide(
-            ball_transform.translation,
-            ball_size,
-            transform.translation,
-            transform.scale.truncate(),
-        );
-        if let Some(collision) = collision {
-            // Sends a collision event so that other systems can react to the collision
-            collision_events.send_default();
-
-            // Enemys should be despawned and increment the scoreboard on collision
-            if maybe_enemy.is_some() {
-                scoreboard.score += 1;
-                commands.entity(collider_entity).despawn();
-            }
-
-            // reflect the ball when it collides
-            let mut reflect_x = false;
-            let mut reflect_y = false;
-
-            // only reflect if the ball's velocity is going in the opposite direction of the
-            // collision
-            match collision {
-                Collision::Left => reflect_x = ball_velocity.x > 0.0,
-                Collision::Right => reflect_x = ball_velocity.x < 0.0,
-                Collision::Top => reflect_y = ball_velocity.y < 0.0,
-                Collision::Bottom => reflect_y = ball_velocity.y > 0.0,
-                Collision::Inside => { /* do nothing */ }
-            }
-
-            // reflect velocity on the x-axis if we hit something on the x-axis
-            if reflect_x {
-                ball_velocity.x = -ball_velocity.x;
-            }
-
-            // reflect velocity on the y-axis if we hit something on the y-axis
-            if reflect_y {
-                ball_velocity.y = -ball_velocity.y;
-            }
-        }
-    }
-}
+) {}
 
 fn play_collision_sound(
     collision_events: EventReader<CollisionEvent>,
