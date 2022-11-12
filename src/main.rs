@@ -1,5 +1,6 @@
 //! A simplified implementation of the classic game "Breakout".
 
+use std::f64::consts::PI;
 use bevy::{
     prelude::*,
     sprite::collide_aabb::{collide, Collision},
@@ -191,9 +192,10 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>)
                 ..default()
             },
             sprite: Sprite {
-                color: PLAYER_COLOR,
+                custom_size: Option::from(Vec2::new(1.0, 1.0)),
                 ..default()
             },
+            texture: asset_server.load("images/player.png"),
             ..default()
         })
         .insert(Collider);
@@ -238,6 +240,8 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>)
             thread_rng().gen_range(LEFT_WALL..RIGHT_WALL),
             thread_rng().gen_range(BOTTOM_WALL..TOP_WALL),
         );
+        
+        let spritenum = thread_rng().gen_range(1..3);
 
         // enemy
         commands
@@ -246,13 +250,18 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>)
             .insert_bundle(SpriteBundle {
                 sprite: Sprite {
                     color: ENEMY_COLOR,
+                    custom_size: Option::from(Vec2::new(1.0, 1.0)),
+                    flip_x: thread_rng().gen(),
+                    flip_y: thread_rng().gen(),
                     ..default()
                 },
                 transform: Transform {
                     translation: enemy_position.extend(0.0),
                     scale: Vec3::new(ENEMY_SIZE.x, ENEMY_SIZE.y, 1.0),
+                    rotation: Quat::from_rotation_z(thread_rng().gen_range(0.0..2.0 * PI) as f32),
                     ..default()
                 },
+                //texture: asset_server.load(&format!("images/enemy_{}.png", spritenum.to_string())),
                 ..default()
             })
             .insert(Velocity(Vec2::new(
@@ -298,21 +307,18 @@ fn magnet(
     }
     
     if keyboard_input.pressed(KeyCode::Q) {
-        player_sprite.color = ENEMY_PULL_COLOR;
+        player_sprite.flip_y = true;
         for (mut enemy_sprite, mut enemy_transform, mut enemy_velocity, maybe_enemy) in enemy_query.iter_mut() {
             pull_push_enemy(&mut player_transform, &mut enemy_sprite, &mut enemy_transform, &mut enemy_velocity, false);
         }
     } else {
-        player_sprite.color = PLAYER_COLOR;
+        player_sprite.flip_y = false;
     }
     
     if keyboard_input.pressed(KeyCode::E) {
-        player_sprite.color = ENEMY_PUSH_COLOR;
         for (mut enemy_sprite, mut enemy_transform, mut enemy_velocity, maybe_enemy) in enemy_query.iter_mut() {
             pull_push_enemy(&mut player_transform, &mut enemy_sprite, &mut enemy_transform, &mut enemy_velocity, true);
         }
-    } else {
-        player_sprite.color = PLAYER_COLOR;
     }
 }
 
