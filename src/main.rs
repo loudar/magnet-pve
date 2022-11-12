@@ -15,7 +15,7 @@ const TIME_STEP: f32 = 1.0 / 60.0;
 const PLAYER_SIZE: Vec3 = Vec3::new(30.0, 30.0, 0.0);
 const GAP_BETWEEN_PLAYER_AND_FLOOR: f32 = 60.0;
 const PLAYER_SPEED: f32 = 300.0;
-const ENEMY_SPEED: f32 = 50.0;
+const ENEMY_SPEED: f32 = 150.0;
 // How close can the player get to the wall
 const PLAYER_PADDING: f32 = 10.0;
 
@@ -44,10 +44,10 @@ const TEXT_COLOR: Color = Color::rgb(0.5, 0.5, 1.0);
 const SCORE_COLOR: Color = Color::rgb(1.0, 0.5, 0.5);
 
 const MAGNET_RADIUS: f32 = 200.0;
-const MAGNET_FORCE: f32 = 3.0;
+const MAGNET_FORCE: f32 = 50.0;
 
 const ENEMY_COUNT: usize = 10; 
-const VELOCITY_DRAG: f32 = 0.8;
+const VELOCITY_DRAG: f32 = 0.99;
 
 fn main() {
     App::new()
@@ -55,16 +55,16 @@ fn main() {
         .insert_resource(Scoreboard { score: 0 })
         .insert_resource(ClearColor(BACKGROUND_COLOR))
         .add_startup_system(setup)
-        .add_event::<CollisionEvent>()
+        .add_event::<MagnetPullEvent>()
+        .add_event::<MagnetPushEvent>()
         .add_system_set(
             SystemSet::new()
                 .with_run_criteria(FixedTimestep::step(TIME_STEP as f64))
                 .with_system(check_for_collisions)
-                /*.with_system(move_enemies_to_player)*/
                 .with_system(move_player.before(check_for_collisions))
                 .with_system(magnet.before(move_player))
                 .with_system(apply_velocity.before(check_for_collisions))
-            /*.with_system(play_collision_sound.after(check_for_collisions))*/,
+                .with_system(play_magnet_sounds.after(magnet)),
         )
         .add_system(update_scoreboard)
         .add_system(bevy::window::close_on_esc)
@@ -81,12 +81,16 @@ struct Velocity(Vec2);
 struct Collider;
 
 #[derive(Default)]
-struct CollisionEvent;
+struct MagnetPullEvent;
+
+#[derive(Default)]
+struct MagnetPushEvent;
 
 #[derive(Component)]
 struct Enemy;
 
-struct CollisionSound(Handle<AudioSource>);
+struct MagnetPullSound(Handle<AudioSource>);
+struct MagnetPushSound(Handle<AudioSource>);
 
 // This bundle is a collection of the components that define a "wall" in our game
 #[derive(Bundle)]
@@ -171,12 +175,11 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.spawn_bundle(Camera2dBundle::default());
 
     // Sound
-    let enemy_collision_sound = asset_server.load("sounds/breakout_collision.ogg");
-    commands.insert_resource(CollisionSound(enemy_collision_sound));
+    commands.insert_resource(MagnetPullSound(asset_server.load("sounds/magnet_pull.ogg")));
+    commands.insert_resource(MagnetPushSound(asset_server.load("sounds/magnet_push.ogg")));
 
-    // player
+    // Player
     let player_y = BOTTOM_WALL + GAP_BETWEEN_PLAYER_AND_FLOOR;
-
     commands
         .spawn()
         .insert(Player)
@@ -193,24 +196,6 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
             ..default()
         })
         .insert(Collider);
-
-    // Ball
-    /*commands
-        .spawn()
-        .insert(Ball)
-        .insert_bundle(SpriteBundle {
-            transform: Transform {
-                scale: enemy_SIZE,
-                translation: enemy_STARTING_POSITION,
-                ..default()
-            },
-            sprite: Sprite {
-                color: enemy_COLOR,
-                ..default()
-            },
-            ..default()
-        })
-        .insert(Velocity(INITIAL_enemy_DIRECTION.normalize() * enemy_SPEED));*/
 
     // Scoreboard
     commands.spawn_bundle(
@@ -286,11 +271,21 @@ fn magnet(
     keyboard_input: Res<Input<KeyCode>>,
     mut query: Query<(&mut Sprite, &mut Transform), With<Player>>,
     mut enemy_query: Query<(&mut Sprite, &mut Transform, &mut Velocity, &Enemy), Without<Player>>,
+    mut magnet_pull_events: EventWriter<MagnetPullEvent>,
+    mut magnet_push_events: EventWriter<MagnetPushEvent>,
 ) {
     let (mut player_sprite, mut player_transform) = query.single_mut();
 
     for (mut enemy_sprite, mut enemy_transform, mut enemy_velocity, maybe_enemy) in enemy_query.iter_mut() {
         enemy_sprite.color = ENEMY_COLOR;
+    }
+    
+    if keyboard_input.just_pressed(KeyCode::Q) {
+        magnet_pull_events.send(MagnetPullEvent);
+    }
+    
+    if keyboard_input.just_pressed(KeyCode::E) {
+        magnet_push_events.send(MagnetPushEvent);
     }
     
     if keyboard_input.pressed(KeyCode::Q) {
@@ -313,31 +308,44 @@ fn magnet(
 }
 
 fn PullPushEnemy(player_transform: &mut Transform, enemy_sprite: &mut Sprite, enemy_transform: &mut Transform, enemy_velocity: &mut Velocity, isPush: bool) {
-    if point_in_radius(
+    if !point_in_radius(
         enemy_transform.translation.truncate(),
         player_transform.translation.truncate(),
         MAGNET_RADIUS,
     ) {
-        let direction;
-        if isPush {
-            enemy_sprite.color = ENEMY_PUSH_COLOR;
-            direction = enemy_transform.translation - player_transform.translation;
-        } else {
-            enemy_sprite.color = ENEMY_PULL_COLOR;
-            direction = player_transform.translation - enemy_transform.translation;
-        }
-        let distance = direction.length();
-        let normalized_direction = direction.normalize();
+        return;
+    }
 
-        let targetSpeed = ENEMY_SPEED * MAGNET_FORCE * (2.0 - (distance / MAGNET_RADIUS));
-        let target_x = normalized_direction.x * targetSpeed * VELOCITY_DRAG;
-        let target_y = normalized_direction.y * targetSpeed * VELOCITY_DRAG;
-        if enemy_transform.translation.x + target_x > LEFT_WALL && enemy_transform.translation.x + target_x < RIGHT_WALL {
-            enemy_velocity.x = target_x;
-        }
-        if enemy_transform.translation.y + target_y > BOTTOM_WALL && enemy_transform.translation.y + target_y < TOP_WALL {
-            enemy_velocity.y = target_y;
-        }
+    let direction;
+    if isPush {
+        direction = enemy_transform.translation - player_transform.translation;
+    } else {
+        direction = player_transform.translation - enemy_transform.translation;
+    }
+    let distance = direction.length();
+    let normalized_direction = direction.normalize();
+
+    let additionalSpeed = MAGNET_FORCE * (MAGNET_RADIUS / distance);
+    let targetSpeed = ENEMY_SPEED + additionalSpeed;
+    let target_x = normalized_direction.x * targetSpeed * VELOCITY_DRAG;
+    let target_y = normalized_direction.y * targetSpeed * VELOCITY_DRAG;
+    let mut moved = false;
+    if enemy_transform.translation.x + target_x > LEFT_WALL && enemy_transform.translation.x + target_x < RIGHT_WALL {
+        enemy_velocity.x = target_x;
+        moved = true;
+    }
+    if enemy_transform.translation.y + target_y > BOTTOM_WALL && enemy_transform.translation.y + target_y < TOP_WALL {
+        enemy_velocity.y = target_y;
+        moved = true;
+    }
+    
+    if !moved {
+        return;
+    }
+    if isPush {
+        enemy_sprite.color = ENEMY_PUSH_COLOR;
+    } else {
+        enemy_sprite.color = ENEMY_PULL_COLOR;
     }
 }
 
@@ -416,7 +424,6 @@ fn update_scoreboard(scoreboard: Res<Scoreboard>, mut query: Query<&mut Text>) {
 fn check_for_collisions(
     mut commands: Commands,
     mut scoreboard: ResMut<Scoreboard>,
-    mut collision_events: EventWriter<CollisionEvent>,
     mut enemy_query: Query<(Entity, &mut Velocity, &Transform, &Collider), With<Enemy>>,
     collider_query: Query<(Entity, &Transform), With<Collider>>,
 ) {
@@ -429,9 +436,7 @@ fn check_for_collisions(
                 wall_transform.scale.truncate(),
             );
             
-            if let Some(collision) = collision {
-                collision_events.send_default();
-                
+            if let Some(collision) = collision {                
                 // reflect the ball when it collides
                 let mut reflect_x = false;
                 let mut reflect_y = false;
@@ -460,16 +465,19 @@ fn check_for_collisions(
     }
 }
 
-fn play_collision_sound(
-    collision_events: EventReader<CollisionEvent>,
+fn play_magnet_sounds(
+    magnet_pull_events: EventReader<MagnetPullEvent>,
+    magnet_push_events: EventReader<MagnetPushEvent>,
     audio: Res<Audio>,
-    sound: Res<CollisionSound>,
+    pull_sound: Res<MagnetPullSound>,
+    push_sound: Res<MagnetPushSound>,
 ) {
-    // Play a sound once per frame if a collision occurred.
-    if !collision_events.is_empty() {
-        // This prevents events staying active on the next frame.
-        collision_events.clear();
-        audio.play(sound.0.clone());
+    if !magnet_pull_events.is_empty() {
+        magnet_pull_events.clear();
+        audio.play(pull_sound.0.clone());
+    }
+    if !magnet_push_events.is_empty() {
+        magnet_push_events.clear();
+        audio.play(push_sound.0.clone());
     }
 }
-
