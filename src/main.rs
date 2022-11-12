@@ -170,7 +170,8 @@ struct Scoreboard {
 }
 
 // Add the game's entities to our world
-fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
+fn setup(mut commands: Commands, asset_server: Res<AssetServer>)
+{
     // Camera
     commands.spawn_bundle(Camera2dBundle::default());
 
@@ -262,7 +263,14 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     }
 }
 
-fn point_in_radius(point: Vec2, center: Vec2, radius: f32) -> bool {
+fn update_scoreboard(scoreboard: Res<Scoreboard>, mut query: Query<&mut Text>)
+{
+    let mut text = query.single_mut();
+    text.sections[1].value = scoreboard.score.to_string();
+}
+
+fn point_in_radius(point: Vec2, center: Vec2, radius: f32) -> bool
+{
     let distance = point.distance(center);
     distance < radius
 }
@@ -273,7 +281,8 @@ fn magnet(
     mut enemy_query: Query<(&mut Sprite, &mut Transform, &mut Velocity, &Enemy), Without<Player>>,
     mut magnet_pull_events: EventWriter<MagnetPullEvent>,
     mut magnet_push_events: EventWriter<MagnetPushEvent>,
-) {
+)
+{
     let (mut player_sprite, mut player_transform) = query.single_mut();
 
     for (mut enemy_sprite, mut enemy_transform, mut enemy_velocity, maybe_enemy) in enemy_query.iter_mut() {
@@ -291,7 +300,7 @@ fn magnet(
     if keyboard_input.pressed(KeyCode::Q) {
         player_sprite.color = ENEMY_PULL_COLOR;
         for (mut enemy_sprite, mut enemy_transform, mut enemy_velocity, maybe_enemy) in enemy_query.iter_mut() {
-            PullPushEnemy(&mut player_transform, &mut enemy_sprite, &mut enemy_transform, &mut enemy_velocity, false);
+            pull_push_enemy(&mut player_transform, &mut enemy_sprite, &mut enemy_transform, &mut enemy_velocity, false);
         }
     } else {
         player_sprite.color = PLAYER_COLOR;
@@ -300,14 +309,21 @@ fn magnet(
     if keyboard_input.pressed(KeyCode::E) {
         player_sprite.color = ENEMY_PUSH_COLOR;
         for (mut enemy_sprite, mut enemy_transform, mut enemy_velocity, maybe_enemy) in enemy_query.iter_mut() {
-            PullPushEnemy(&mut player_transform, &mut enemy_sprite, &mut enemy_transform, &mut enemy_velocity, true);
+            pull_push_enemy(&mut player_transform, &mut enemy_sprite, &mut enemy_transform, &mut enemy_velocity, true);
         }
     } else {
         player_sprite.color = PLAYER_COLOR;
     }
 }
 
-fn PullPushEnemy(player_transform: &mut Transform, enemy_sprite: &mut Sprite, enemy_transform: &mut Transform, enemy_velocity: &mut Velocity, isPush: bool) {
+fn pull_push_enemy(
+    player_transform: &mut Transform,
+    enemy_sprite: &mut Sprite,
+    enemy_transform: &mut Transform,
+    enemy_velocity: &mut Velocity,
+    isPush: bool
+)
+{
     if !point_in_radius(
         enemy_transform.translation.truncate(),
         player_transform.translation.truncate(),
@@ -325,10 +341,10 @@ fn PullPushEnemy(player_transform: &mut Transform, enemy_sprite: &mut Sprite, en
     let distance = direction.length();
     let normalized_direction = direction.normalize();
 
-    let additionalSpeed = MAGNET_FORCE * (MAGNET_RADIUS / distance);
-    let targetSpeed = ENEMY_SPEED + additionalSpeed;
-    let target_x = normalized_direction.x * targetSpeed * VELOCITY_DRAG;
-    let target_y = normalized_direction.y * targetSpeed * VELOCITY_DRAG;
+    let additional_speed = MAGNET_FORCE * (MAGNET_RADIUS / distance);
+    let target_speed = ENEMY_SPEED + additional_speed;
+    let target_x = normalized_direction.x * target_speed * VELOCITY_DRAG;
+    let target_y = normalized_direction.y * target_speed * VELOCITY_DRAG;
     let mut moved = false;
     if enemy_transform.translation.x + target_x > LEFT_WALL && enemy_transform.translation.x + target_x < RIGHT_WALL {
         enemy_velocity.x = target_x;
@@ -352,7 +368,8 @@ fn PullPushEnemy(player_transform: &mut Transform, enemy_sprite: &mut Sprite, en
 fn move_player(
     keyboard_input: Res<Input<KeyCode>>,
     mut query: Query<(&mut Sprite, &mut Transform), With<Player>>,
-) {
+)
+{
     let (mut player_sprite, mut player_transform) = query.single_mut();
     let mut direction = Vec2::ZERO;
 
@@ -389,7 +406,8 @@ fn move_player(
 fn move_enemies_to_player(
     mut player_query: Query<(&mut Sprite, &mut Transform), With<Player>>,
     mut query: Query<(&mut Sprite, &mut Transform, &mut Velocity, &Enemy), Without<Player>>,
-) {
+)
+{
     let (mut player_sprite, mut player_transform) = player_query.single_mut();
     for (mut enemy_sprite, mut enemy_transform, mut enemy_velocity, maybe_enemy) in query.iter_mut() {
         let direction = player_transform.translation - enemy_transform.translation;
@@ -408,16 +426,12 @@ fn move_enemies_to_player(
     }
 }
 
-fn apply_velocity(mut query: Query<(&mut Transform, &Velocity)>) {
+fn apply_velocity(mut query: Query<(&mut Transform, &Velocity)>)
+{
     for (mut transform, velocity) in &mut query {
         transform.translation.x += velocity.x * TIME_STEP;
         transform.translation.y += velocity.y * TIME_STEP;
     }
-}
-
-fn update_scoreboard(scoreboard: Res<Scoreboard>, mut query: Query<&mut Text>) {
-    let mut text = query.single_mut();
-    text.sections[1].value = scoreboard.score.to_string();
 }
 
 // check collisions for enemies with walls
@@ -426,7 +440,8 @@ fn check_for_collisions(
     mut scoreboard: ResMut<Scoreboard>,
     mut enemy_query: Query<(Entity, &mut Velocity, &Transform, &Collider), With<Enemy>>,
     collider_query: Query<(Entity, &Transform), With<Collider>>,
-) {
+)
+{
     for (enemy_entity, mut enemy_velocity, enemy_transform, enemy_collider) in enemy_query.iter_mut() {
         for (wall_entity, wall_transform) in collider_query.iter() {
             let collision = collide(
@@ -471,7 +486,8 @@ fn play_magnet_sounds(
     audio: Res<Audio>,
     pull_sound: Res<MagnetPullSound>,
     push_sound: Res<MagnetPushSound>,
-) {
+)
+{
     if !magnet_pull_events.is_empty() {
         magnet_pull_events.clear();
         audio.play(pull_sound.0.clone());
