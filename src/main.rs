@@ -1,5 +1,6 @@
 //! A simplified implementation of the classic game "Breakout".
 
+use std::cmp::max;
 use std::f64::consts::PI;
 use bevy::{
     prelude::*,
@@ -50,6 +51,12 @@ const MAGNET_FORCE: f32 = 50.0;
 const ENEMY_COUNT: usize = 10; 
 const VELOCITY_DRAG: f32 = 0.99;
 
+const WEAPON_RADIUS: f32 = MAGNET_RADIUS / 2.0;
+const DAMAGE: f32 = 10.0;
+
+const PLAYER_HEALTH: f32 = 100.0;
+const ENEMY_HEALTH: f32 = 10.0;
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
@@ -61,11 +68,12 @@ fn main() {
         .add_system_set(
             SystemSet::new()
                 .with_run_criteria(FixedTimestep::step(TIME_STEP as f64))
-                .with_system(check_for_collisions)
-                .with_system(move_player.before(check_for_collisions))
+                .with_system(combat.before(magnet))
                 .with_system(magnet.before(move_player))
+                .with_system(play_magnet_sounds.after(magnet))
+                .with_system(move_player.before(check_for_collisions))
                 .with_system(apply_velocity.before(check_for_collisions))
-                .with_system(play_magnet_sounds.after(magnet)),
+                .with_system(check_for_collisions)
         )
         .add_system(update_scoreboard)
         .add_system(bevy::window::close_on_esc)
@@ -89,6 +97,9 @@ struct MagnetPushEvent;
 
 #[derive(Component)]
 struct Enemy;
+
+#[derive(Component)]
+struct Health(f32);
 
 struct MagnetPullSound(Handle<AudioSource>);
 struct MagnetPushSound(Handle<AudioSource>);
@@ -171,7 +182,11 @@ struct Scoreboard {
 }
 
 // Add the game's entities to our world
-fn setup(mut commands: Commands, asset_server: Res<AssetServer>)
+fn setup(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    audio: Res<Audio>
+)
 {
     // Camera
     commands.spawn_bundle(Camera2dBundle::default());
@@ -180,11 +195,14 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>)
     commands.insert_resource(MagnetPullSound(asset_server.load("sounds/magnet_pull.ogg")));
     commands.insert_resource(MagnetPushSound(asset_server.load("sounds/magnet_push.ogg")));
 
+    audio.play_with_settings(asset_server.load("sounds/soundtrack.ogg"), PlaybackSettings::LOOP.with_volume(0.75));
+    
     // Player
     let player_y = BOTTOM_WALL + GAP_BETWEEN_PLAYER_AND_FLOOR;
     commands
         .spawn()
         .insert(Player)
+        .insert(Health(PLAYER_HEALTH))
         .insert_bundle(SpriteBundle {
             transform: Transform {
                 translation: Vec3::new(0.0, player_y, 0.0),
@@ -247,6 +265,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>)
         commands
             .spawn()
             .insert(Enemy)
+            .insert(Health(ENEMY_HEALTH))
             .insert_bundle(SpriteBundle {
                 sprite: Sprite {
                     color: ENEMY_COLOR,
@@ -261,7 +280,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>)
                     rotation: Quat::from_rotation_z(thread_rng().gen_range(0.0..2.0 * PI) as f32),
                     ..default()
                 },
-                //texture: asset_server.load(&format!("images/enemy_{}.png", spritenum.to_string())),
+                texture: asset_server.load(&format!("images/enemy_{}.png", spritenum.to_string())),
                 ..default()
             })
             .insert(Velocity(Vec2::new(
@@ -282,6 +301,31 @@ fn point_in_radius(point: Vec2, center: Vec2, radius: f32) -> bool
 {
     let distance = point.distance(center);
     distance < radius
+}
+
+fn combat(
+    mut commands: Commands,
+    buttons: Res<Input<MouseButton>>,
+    mut scoreboard: ResMut<Scoreboard>,
+    mut player_query: Query<(&mut Sprite, &mut Transform), With<Player>>,
+    mut enemy_query: Query<(&mut Sprite, &mut Transform, &mut Health, &Enemy, Entity), Without<Player>>,
+)
+{
+    let (player_sprite, mut player_transform) = player_query.single_mut();
+    let player_position = player_transform.translation.truncate();
+     
+    for (mut enemy_sprite, mut enemy_transform, mut enemy_health, enemy, entity) in enemy_query.iter_mut() {
+        let enemy_position = enemy_transform.translation.truncate();
+        let distance = player_position.distance(enemy_position);
+        
+        if distance < WEAPON_RADIUS && buttons.just_pressed(MouseButton::Left) {
+            enemy_health.0 -= DAMAGE;
+            if enemy_health.0 <= 0.0 {
+                commands.entity(entity).despawn();
+                scoreboard.score += 1;
+            }
+        }
+    }
 }
 
 fn magnet(
