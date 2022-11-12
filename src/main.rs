@@ -241,7 +241,7 @@ fn setup(
         ))
     ));
 
-    //audio.play_with_settings(asset_server.load("sounds/soundtrack.ogg"), PlaybackSettings::LOOP.with_volume(0.75));
+    audio.play_with_settings(asset_server.load("sounds/soundtrack.ogg"), PlaybackSettings::LOOP.with_volume(0.5));
 
     // Player
     let player_y = BOTTOM_WALL + GAP_BETWEEN_PLAYER_AND_FLOOR;
