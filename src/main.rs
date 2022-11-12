@@ -5,23 +5,18 @@ use bevy::{
     sprite::collide_aabb::{collide, Collision},
     time::FixedTimestep,
 };
+use rand::prelude::*;
 
 // Defines the amount of time that should elapse between each physics step.
 const TIME_STEP: f32 = 1.0 / 60.0;
 
 // These constants are defined in `Transform` units.
 // Using the default 2D camera they correspond 1:1 with screen pixels.
-const player_SIZE: Vec3 = Vec3::new(20.0, 20.0, 0.0);
+const PLAYER_SIZE: Vec3 = Vec3::new(30.0, 30.0, 0.0);
 const GAP_BETWEEN_PLAYER_AND_FLOOR: f32 = 60.0;
-const player_SPEED: f32 = 500.0;
+const PLAYER_SPEED: f32 = 300.0;
 // How close can the player get to the wall
-const player_PADDING: f32 = 10.0;
-
-// We set the z-value of the ball to 1 so it renders on top in the case of overlapping sprites.
-const BALL_STARTING_POSITION: Vec3 = Vec3::new(0.0, -50.0, 1.0);
-const BALL_SIZE: Vec3 = Vec3::new(30.0, 30.0, 0.0);
-const BALL_SPEED: f32 = 400.0;
-const INITIAL_BALL_DIRECTION: Vec2 = Vec2::new(0.5, -0.5);
+const PLAYER_PADDING: f32 = 10.0;
 
 const WALL_THICKNESS: f32 = 10.0;
 // x coordinates
@@ -31,23 +26,26 @@ const RIGHT_WALL: f32 = 450.;
 const BOTTOM_WALL: f32 = -300.;
 const TOP_WALL: f32 = 300.;
 
-const ENEMY_SIZE: Vec2 = Vec2::new(100., 30.);
+const ENEMY_SIZE: Vec2 = Vec2::new(20.0, 20.0);
 // These values are exact
-const GAP_BETWEEN_player_AND_BRICKS: f32 = 270.0;
+const GAP_BETWEEN_PLAYER_AND_ENEMIES: f32 = 270.0;
 
 const SCOREBOARD_FONT_SIZE: f32 = 40.0;
 const SCOREBOARD_TEXT_PADDING: Val = Val::Px(5.0);
 
 const BACKGROUND_COLOR: Color = Color::rgb(0.9, 0.9, 0.9);
-const player_COLOR: Color = Color::rgb(0.3, 0.3, 0.7);
+const PLAYER_COLOR: Color = Color::rgb(0.3, 0.3, 0.7);
 const BALL_COLOR: Color = Color::rgb(1.0, 0.5, 0.5);
-const BRICK_COLOR: Color = Color::rgb(0.5, 0.5, 1.0);
+const ENEMY_COLOR: Color = Color::rgb(0.5, 0.5, 1.0);
+const ENEMY_PULL_COLOR: Color = Color::rgb(1.0, 0.5, 0.5);
 const WALL_COLOR: Color = Color::rgb(0.8, 0.8, 0.8);
 const TEXT_COLOR: Color = Color::rgb(0.5, 0.5, 1.0);
 const SCORE_COLOR: Color = Color::rgb(1.0, 0.5, 0.5);
 
-const MAGNET_RADIUS: f32 = 100.0;
-const MAGNET_FORCE: f32 = 10.0;
+const MAGNET_RADIUS: f32 = 200.0;
+const MAGNET_FORCE: f32 = 3.0;
+
+const ENEMY_COUNT: usize = 10; 
 
 fn main() {
     App::new()
@@ -61,7 +59,7 @@ fn main() {
                 /*.with_run_criteria(FixedTimestep::step(TIME_STEP as f64))
                 check_for_collisions)*/
                 .with_system(move_player)
-                .with_system(player_actions.after(move_player))
+                .with_system(magnet.after(move_player))
             /*.with_system(apply_velocity.before(check_for_collisions))
             .with_system(play_collision_sound.after(check_for_collisions))*/,
         )
@@ -97,7 +95,6 @@ struct WallBundle {
     collider: Collider,
 }
 
-/// Which side of the arena is this wall located on?
 enum WallLocation {
     Left,
     Right,
@@ -183,11 +180,11 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         .insert_bundle(SpriteBundle {
             transform: Transform {
                 translation: Vec3::new(0.0, player_y, 0.0),
-                scale: player_SIZE,
+                scale: PLAYER_SIZE,
                 ..default()
             },
             sprite: Sprite {
-                color: player_COLOR,
+                color: PLAYER_COLOR,
                 ..default()
             },
             ..default()
@@ -246,10 +243,11 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.spawn_bundle(WallBundle::new(WallLocation::Bottom));
     commands.spawn_bundle(WallBundle::new(WallLocation::Top));
 
-    /*for e in 0..enemies.count() {
+    // Enemies
+    for i in 0..ENEMY_COUNT {
         let enemy_position = Vec2::new(
-            offset_x + enemies[e].x as f32 * (ENEMY_SIZE.x + GAP_BETWEEN_BRICKS),
-            offset_y + enemies[e].y as f32 * (ENEMY_SIZE.y + GAP_BETWEEN_BRICKS),
+            thread_rng().gen_range(LEFT_WALL..RIGHT_WALL),
+            thread_rng().gen_range(BOTTOM_WALL..TOP_WALL),
         );
 
         // enemy
@@ -258,7 +256,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
             .insert(Enemy)
             .insert_bundle(SpriteBundle {
                 sprite: Sprite {
-                    color: BRICK_COLOR,
+                    color: ENEMY_COLOR,
                     ..default()
                 },
                 transform: Transform {
@@ -269,17 +267,41 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                 ..default()
             })
             .insert(Collider);
-    }*/
+    }
 }
 
-fn player_actions(
-    keyboard_input: Res<Input<KeyCode>>,
-    mut query: Query<&mut Sprite, With<Player>>,
-) {
-    let mut playersprite = query.single_mut();
+fn point_in_radius(point: Vec2, center: Vec2, radius: f32) -> bool {
+    let distance = point.distance(center);
+    distance < radius
+}
 
+fn magnet(
+    keyboard_input: Res<Input<KeyCode>>,
+    mut query: Query<(&mut Sprite, &mut Transform), With<Player>>,
+    mut enemy_query: Query<(&mut Sprite, &mut Transform, &Enemy), Without<Player>>,
+) {
+    let (mut player_sprite, mut player_transform) = query.single_mut();
+
+    for (mut enemy_sprite, mut enemy_transform, maybe_enemy) in enemy_query.iter_mut() {
+        enemy_sprite.color = ENEMY_COLOR;
+    }
+    
     if keyboard_input.pressed(KeyCode::Q) {
-        playersprite.color = Color::rgb(1.0, 0.0, 0.0);
+        player_sprite.color = ENEMY_PULL_COLOR;
+        for (mut enemy_sprite, mut enemy_transform, maybe_enemy) in enemy_query.iter_mut() {
+            if point_in_radius(
+                enemy_transform.translation.truncate(),
+                player_transform.translation.truncate(),
+                MAGNET_RADIUS,
+            ) {
+                enemy_sprite.color = ENEMY_PULL_COLOR;
+                let direction = player_transform.translation - enemy_transform.translation;
+                let distance = direction.length();
+                enemy_transform.translation += direction.normalize() * (MAGNET_FORCE * (1.0 - (distance / MAGNET_RADIUS)));
+            }
+        }
+    } else {
+        player_sprite.color = PLAYER_COLOR;
     }
 }
 
@@ -287,7 +309,7 @@ fn move_player(
     keyboard_input: Res<Input<KeyCode>>,
     mut query: Query<(&mut Sprite, &mut Transform), With<Player>>,
 ) {
-    let (mut playersprite, mut playertransform) = query.single_mut();
+    let (mut player_sprite, mut player_transform) = query.single_mut();
     let mut direction = Vec2::ZERO;
 
     if keyboard_input.pressed(KeyCode::Left) {
@@ -306,18 +328,18 @@ fn move_player(
         direction.y -= 1.0;
     }
 
-    let new_player_pos_x = playertransform.translation.x + direction.x * player_SPEED * TIME_STEP;
-    let new_player_pos_y = playertransform.translation.y + direction.y * player_SPEED * TIME_STEP;
+    let new_player_pos_x = player_transform.translation.x + direction.x * PLAYER_SPEED * TIME_STEP;
+    let new_player_pos_y = player_transform.translation.y + direction.y * PLAYER_SPEED * TIME_STEP;
 
     // Update the player position,
     // making sure it doesn't cause the player to leave the arena
-    let left_bound = LEFT_WALL + WALL_THICKNESS / 2.0 + player_SIZE.x / 2.0 + player_PADDING;
-    let right_bound = RIGHT_WALL - WALL_THICKNESS / 2.0 - player_SIZE.x / 2.0 - player_PADDING;
-    let bottom_bound = BOTTOM_WALL + WALL_THICKNESS / 2.0 + player_SIZE.y / 2.0 + player_PADDING;
-    let top_bound = TOP_WALL - WALL_THICKNESS / 2.0 - player_SIZE.y / 2.0 - player_PADDING;
+    let left_bound = LEFT_WALL + WALL_THICKNESS / 2.0 + PLAYER_SIZE.x / 2.0 + PLAYER_PADDING;
+    let right_bound = RIGHT_WALL - WALL_THICKNESS / 2.0 - PLAYER_SIZE.x / 2.0 - PLAYER_PADDING;
+    let bottom_bound = BOTTOM_WALL + WALL_THICKNESS / 2.0 + PLAYER_SIZE.y / 2.0 + PLAYER_PADDING;
+    let top_bound = TOP_WALL - WALL_THICKNESS / 2.0 - PLAYER_SIZE.y / 2.0 - PLAYER_PADDING;
 
-    playertransform.translation.x = new_player_pos_x.clamp(left_bound, right_bound);
-    playertransform.translation.y = new_player_pos_y.clamp(bottom_bound, top_bound);
+    player_transform.translation.x = new_player_pos_x.clamp(left_bound, right_bound);
+    player_transform.translation.y = new_player_pos_y.clamp(bottom_bound, top_bound);
 }
 
 fn apply_velocity(mut query: Query<(&mut Transform, &Velocity)>) {
