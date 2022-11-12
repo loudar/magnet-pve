@@ -15,6 +15,7 @@ const TIME_STEP: f32 = 1.0 / 60.0;
 const PLAYER_SIZE: Vec3 = Vec3::new(30.0, 30.0, 0.0);
 const GAP_BETWEEN_PLAYER_AND_FLOOR: f32 = 60.0;
 const PLAYER_SPEED: f32 = 300.0;
+const ENEMY_SPEED: f32 = 50.0;
 // How close can the player get to the wall
 const PLAYER_PADDING: f32 = 10.0;
 
@@ -35,9 +36,10 @@ const SCOREBOARD_TEXT_PADDING: Val = Val::Px(5.0);
 
 const BACKGROUND_COLOR: Color = Color::rgb(0.9, 0.9, 0.9);
 const PLAYER_COLOR: Color = Color::rgb(0.3, 0.3, 0.7);
-const BALL_COLOR: Color = Color::rgb(1.0, 0.5, 0.5);
+const enemy_COLOR: Color = Color::rgb(1.0, 0.5, 0.5);
 const ENEMY_COLOR: Color = Color::rgb(0.5, 0.5, 1.0);
 const ENEMY_PULL_COLOR: Color = Color::rgb(1.0, 0.5, 0.5);
+const ENEMY_PUSH_COLOR: Color = Color::rgb(0.5, 1.0, 0.5);
 const WALL_COLOR: Color = Color::rgb(0.8, 0.8, 0.8);
 const TEXT_COLOR: Color = Color::rgb(0.5, 0.5, 1.0);
 const SCORE_COLOR: Color = Color::rgb(1.0, 0.5, 0.5);
@@ -46,6 +48,7 @@ const MAGNET_RADIUS: f32 = 200.0;
 const MAGNET_FORCE: f32 = 3.0;
 
 const ENEMY_COUNT: usize = 10; 
+const VELOCITY_DRAG: f32 = 0.8;
 
 fn main() {
     App::new()
@@ -56,12 +59,12 @@ fn main() {
         .add_event::<CollisionEvent>()
         .add_system_set(
             SystemSet::new()
-                /*.with_run_criteria(FixedTimestep::step(TIME_STEP as f64))
-                check_for_collisions)*/
-                .with_system(move_player)
-                .with_system(magnet.after(move_player))
-            /*.with_system(apply_velocity.before(check_for_collisions))
-            .with_system(play_collision_sound.after(check_for_collisions))*/,
+                .with_run_criteria(FixedTimestep::step(TIME_STEP as f64))
+                .with_system(check_for_collisions)
+                .with_system(move_player.before(check_for_collisions))
+                .with_system(magnet.before(move_player))
+                .with_system(apply_velocity.before(check_for_collisions))
+            /*.with_system(play_collision_sound.after(check_for_collisions))*/,
         )
         .add_system(update_scoreboard)
         .add_system(bevy::window::close_on_esc)
@@ -168,8 +171,8 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.spawn_bundle(Camera2dBundle::default());
 
     // Sound
-    let ball_collision_sound = asset_server.load("sounds/breakout_collision.ogg");
-    commands.insert_resource(CollisionSound(ball_collision_sound));
+    let enemy_collision_sound = asset_server.load("sounds/breakout_collision.ogg");
+    commands.insert_resource(CollisionSound(enemy_collision_sound));
 
     // player
     let player_y = BOTTOM_WALL + GAP_BETWEEN_PLAYER_AND_FLOOR;
@@ -197,17 +200,17 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         .insert(Ball)
         .insert_bundle(SpriteBundle {
             transform: Transform {
-                scale: BALL_SIZE,
-                translation: BALL_STARTING_POSITION,
+                scale: enemy_SIZE,
+                translation: enemy_STARTING_POSITION,
                 ..default()
             },
             sprite: Sprite {
-                color: BALL_COLOR,
+                color: enemy_COLOR,
                 ..default()
             },
             ..default()
         })
-        .insert(Velocity(INITIAL_BALL_DIRECTION.normalize() * BALL_SPEED));*/
+        .insert(Velocity(INITIAL_enemy_DIRECTION.normalize() * enemy_SPEED));*/
 
     // Scoreboard
     commands.spawn_bundle(
@@ -266,6 +269,10 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                 },
                 ..default()
             })
+            .insert(Velocity(Vec2::new(
+                thread_rng().gen_range(-ENEMY_SPEED..ENEMY_SPEED),
+                thread_rng().gen_range(-ENEMY_SPEED..ENEMY_SPEED),
+            )))
             .insert(Collider);
     }
 }
@@ -278,17 +285,17 @@ fn point_in_radius(point: Vec2, center: Vec2, radius: f32) -> bool {
 fn magnet(
     keyboard_input: Res<Input<KeyCode>>,
     mut query: Query<(&mut Sprite, &mut Transform), With<Player>>,
-    mut enemy_query: Query<(&mut Sprite, &mut Transform, &Enemy), Without<Player>>,
+    mut enemy_query: Query<(&mut Sprite, &mut Transform, &mut Velocity, &Enemy), Without<Player>>,
 ) {
     let (mut player_sprite, mut player_transform) = query.single_mut();
 
-    for (mut enemy_sprite, mut enemy_transform, maybe_enemy) in enemy_query.iter_mut() {
+    for (mut enemy_sprite, mut enemy_transform, mut enemy_velocity, maybe_enemy) in enemy_query.iter_mut() {
         enemy_sprite.color = ENEMY_COLOR;
     }
     
     if keyboard_input.pressed(KeyCode::Q) {
         player_sprite.color = ENEMY_PULL_COLOR;
-        for (mut enemy_sprite, mut enemy_transform, maybe_enemy) in enemy_query.iter_mut() {
+        for (mut enemy_sprite, mut enemy_transform, mut enemy_velocity, maybe_enemy) in enemy_query.iter_mut() {
             if point_in_radius(
                 enemy_transform.translation.truncate(),
                 player_transform.translation.truncate(),
@@ -297,7 +304,33 @@ fn magnet(
                 enemy_sprite.color = ENEMY_PULL_COLOR;
                 let direction = player_transform.translation - enemy_transform.translation;
                 let distance = direction.length();
-                enemy_transform.translation += direction.normalize() * (MAGNET_FORCE * (1.0 - (distance / MAGNET_RADIUS)));
+                let normalized_direction = direction.normalize();
+                
+                let targetSpeed = ENEMY_SPEED * MAGNET_FORCE * (2.0 - (distance / MAGNET_RADIUS));
+                enemy_velocity.x = normalized_direction.x * targetSpeed * VELOCITY_DRAG;
+                enemy_velocity.y = normalized_direction.y * targetSpeed * VELOCITY_DRAG;
+            }
+        }
+    } else {
+        player_sprite.color = PLAYER_COLOR;
+    }
+    
+    if keyboard_input.pressed(KeyCode::E) {
+        player_sprite.color = ENEMY_PUSH_COLOR;
+        for (mut enemy_sprite, mut enemy_transform, mut enemy_velocity, maybe_enemy) in enemy_query.iter_mut() {
+            if point_in_radius(
+                enemy_transform.translation.truncate(),
+                player_transform.translation.truncate(),
+                MAGNET_RADIUS,
+            ) {
+                enemy_sprite.color = ENEMY_PUSH_COLOR;
+                let direction = enemy_transform.translation - player_transform.translation;
+                let distance = direction.length();
+                let normalized_direction = direction.normalize();
+                
+                let targetSpeed = ENEMY_SPEED * MAGNET_FORCE * (2.0 - (distance / MAGNET_RADIUS));
+                enemy_velocity.x = normalized_direction.x * targetSpeed * VELOCITY_DRAG;
+                enemy_velocity.y = normalized_direction.y * targetSpeed * VELOCITY_DRAG;
             }
         }
     } else {
@@ -357,8 +390,53 @@ fn update_scoreboard(scoreboard: Res<Scoreboard>, mut query: Query<&mut Text>) {
 fn check_for_collisions(
     mut commands: Commands,
     mut scoreboard: ResMut<Scoreboard>,
+    collider_query: Query<(Entity, &Transform, Option<&Enemy>), With<Collider>>,
     mut collision_events: EventWriter<CollisionEvent>,
-) {}
+) {
+    // check collision with walls
+    /*for (collider_entity, transform, maybe_enemy) in &collider_query {
+        let collision = collide(
+            enemy_transform.translation,
+            enemy_size,
+            transform.translation,
+            transform.scale.truncate(),
+        );
+        if let Some(collision) = collision {
+            // Sends a collision event so that other systems can react to the collision
+            collision_events.send_default();
+
+            // Bricks should be despawned and increment the scoreboard on collision
+            if maybe_enemy.is_some() {
+                scoreboard.score += 1;
+                commands.entity(collider_entity).despawn();
+            }
+
+            // reflect the ball when it collides
+            let mut reflect_x = false;
+            let mut reflect_y = false;
+
+            // only reflect if the ball's velocity is going in the opposite direction of the
+            // collision
+            match collision {
+                Collision::Left => reflect_x = enemy_velocity.x > 0.0,
+                Collision::Right => reflect_x = enemy_velocity.x < 0.0,
+                Collision::Top => reflect_y = enemy_velocity.y < 0.0,
+                Collision::Bottom => reflect_y = enemy_velocity.y > 0.0,
+                Collision::Inside => { /* do nothing */ }
+            }
+
+            // reflect velocity on the x-axis if we hit something on the x-axis
+            if reflect_x {
+                enemy_velocity.x = -enemy_velocity.x;
+            }
+
+            // reflect velocity on the y-axis if we hit something on the y-axis
+            if reflect_y {
+                enemy_velocity.y = -enemy_velocity.y;
+            }
+        }
+    }*/
+}
 
 fn play_collision_sound(
     collision_events: EventReader<CollisionEvent>,
