@@ -7,9 +7,8 @@ use bevy::{
     sprite::collide_aabb::{collide, Collision},
     time::FixedTimestep,
 };
+use bevy_simple_stat_bars::prelude::*;
 use rand::prelude::*;
-
-mod combat;
 
 // Defines the amount of time that should elapse between each physics step.
 const TIME_STEP: f32 = 1.0 / 60.0;
@@ -58,6 +57,9 @@ const DAMAGE: f32 = 10.0;
 const PLAYER_HEALTH: f32 = 100.0;
 const ENEMY_HEALTH: f32 = 10.0;
 
+const EXPLOSION_SHEET: &str = "images/explo_a_sheet.png";
+const EXPLOSION_LEN: usize = 16;
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
@@ -69,15 +71,17 @@ fn main() {
         .add_system_set(
             SystemSet::new()
                 .with_run_criteria(FixedTimestep::step(TIME_STEP as f64))
-                .with_system(combat.before(magnet))
                 .with_system(magnet.before(move_player))
                 .with_system(play_magnet_sounds.after(magnet))
                 .with_system(move_player.before(check_for_collisions))
                 .with_system(apply_velocity.before(check_for_collisions))
+                .with_system(combat.before(check_for_collisions))
                 .with_system(check_for_collisions)
         )
         .add_system(update_scoreboard)
         .add_system(bevy::window::close_on_esc)
+        .add_system(explosion_to_spawn_system)
+        .add_system(explosion_animation_system)
         .run();
 }
 
@@ -100,10 +104,27 @@ struct MagnetPushEvent;
 struct Enemy;
 
 #[derive(Component)]
-struct Health(f32);
+struct Hp { current: i32, max: i32 }
+
+#[derive(Component)]
+pub struct Explosion;
+
+#[derive(Component)]
+pub struct ExplosionToSpawn(pub Vec3);
+
+#[derive(Component)]
+pub struct ExplosionTimer(pub Timer);
+
+impl Default for ExplosionTimer {
+    fn default() -> Self {
+        Self(Timer::from_seconds(0.05, true))
+    }
+}
 
 struct MagnetPullSound(Handle<AudioSource>);
 struct MagnetPushSound(Handle<AudioSource>);
+
+struct ExplosionTexture(Handle<TextureAtlas>);
 
 // This bundle is a collection of the components that define a "wall" in our game
 #[derive(Bundle)]
@@ -186,6 +207,7 @@ struct Scoreboard {
 fn setup(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
+    mut texture_atlases: ResMut<Assets<TextureAtlas>>,
     audio: Res<Audio>
 )
 {
@@ -195,15 +217,24 @@ fn setup(
     // Sound
     commands.insert_resource(MagnetPullSound(asset_server.load("sounds/magnet_pull.ogg")));
     commands.insert_resource(MagnetPushSound(asset_server.load("sounds/magnet_push.ogg")));
+    
+    commands.insert_resource(ExplosionTexture(
+        texture_atlases.add(TextureAtlas::from_grid(
+            asset_server.load(EXPLOSION_SHEET),
+            Vec2::new(64.0, 64.0),
+            EXPLOSION_LEN,
+            EXPLOSION_LEN,
+        ))
+    ));
 
     audio.play_with_settings(asset_server.load("sounds/soundtrack.ogg"), PlaybackSettings::LOOP.with_volume(0.75));
     
     // Player
     let player_y = BOTTOM_WALL + GAP_BETWEEN_PLAYER_AND_FLOOR;
-    commands
+    let player = commands
         .spawn()
         .insert(Player)
-        .insert(Health(PLAYER_HEALTH))
+        .insert(Hp { current: PLAYER_HEALTH as i32, max: PLAYER_HEALTH as i32 })
         .insert_bundle(SpriteBundle {
             transform: Transform {
                 translation: Vec3::new(0.0, player_y, 0.0),
@@ -217,7 +248,8 @@ fn setup(
             texture: asset_server.load("images/player.png"),
             ..default()
         })
-        .insert(Collider);
+        .insert(Collider)
+        .id();
 
     // Scoreboard
     commands.spawn_bundle(
@@ -266,7 +298,7 @@ fn setup(
         commands
             .spawn()
             .insert(Enemy)
-            .insert(Health(ENEMY_HEALTH))
+            .insert(Hp { current: ENEMY_HEALTH as i32, max: ENEMY_HEALTH as i32 })
             .insert_bundle(SpriteBundle {
                 sprite: Sprite {
                     color: ENEMY_COLOR,
@@ -302,6 +334,80 @@ fn point_in_radius(point: Vec2, center: Vec2, radius: f32) -> bool
 {
     let distance = point.distance(center);
     distance < radius
+}
+
+fn combat(
+    mut commands: Commands,
+    buttons: Res<Input<MouseButton>>,
+    keyboard_input: Res<Input<KeyCode>>,
+    mut scoreboard: ResMut<Scoreboard>,
+    mut player_query: Query<(&mut Sprite, &mut Transform), With<Player>>,
+    mut enemy_query: Query<(&mut Sprite, &mut Transform, &mut Hp, &Enemy, Entity), Without<Player>>,
+)
+{
+    let (player_sprite, mut player_transform) = player_query.single_mut();
+    let player_position = player_transform.translation.truncate();
+
+    for (mut enemy_sprite, mut enemy_transform, mut enemy_health, enemy, entity) in enemy_query.iter_mut() {
+        let enemy_position = enemy_transform.translation.truncate();
+        let distance = player_position.distance(enemy_position);
+
+        if distance <= WEAPON_RADIUS &&
+            (
+                buttons.just_pressed(MouseButton::Left)
+                    || keyboard_input.just_pressed(KeyCode::Space)
+            ) {
+
+            print!("Hit enemy!");
+            enemy_health.current -= DAMAGE as i32;
+            if enemy_health.current <= 0 {
+                commands.entity(entity).despawn();
+                scoreboard.score += 1;
+                
+                commands.spawn().insert(ExplosionToSpawn(enemy_transform.translation.clone()));
+            }
+        }
+    }
+}
+
+fn explosion_to_spawn_system(
+    mut commands: Commands,
+    explosion_texture: Res<ExplosionTexture>,
+    query: Query<(Entity, &ExplosionToSpawn)>,
+) {
+    for (explosion_spawn_entity, explosion_to_spawn) in query.iter() {
+        // spawn the explosion sprite
+        commands
+            .spawn_bundle(SpriteSheetBundle {
+                texture_atlas: explosion_texture.0.clone(),
+                transform: Transform {
+                    translation: explosion_to_spawn.0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .insert(Explosion)
+            .insert(ExplosionTimer::default());
+
+        // despawn the explosionToSpawn
+        commands.entity(explosion_spawn_entity).despawn();
+    }
+}
+
+fn explosion_animation_system(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut query: Query<(Entity, &mut ExplosionTimer, &mut TextureAtlasSprite), With<Explosion>>,
+) {
+    for (entity, mut timer, mut sprite) in query.iter_mut() {
+        timer.0.tick(time.delta());
+        if timer.0.finished() {
+            sprite.index += 1; // move to next sprite cell
+            if sprite.index >= EXPLOSION_LEN {
+                commands.entity(entity).despawn()
+            }
+        }
+    }
 }
 
 fn magnet(
